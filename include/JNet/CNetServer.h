@@ -1,0 +1,130 @@
+#pragma once
+#include <map>
+#include <vector>
+#include <stack>
+#include <JCore/CLockFreeStack.h>
+#include <JNet/Session.h>
+#include <JNet/INetworkEntity.h>
+#include <JNet/PacketHeader.h>
+#include <JNet/CWorkerThread.h>
+#include <JNet/CMonitorThread.h>
+
+struct FServerConfig
+{
+	std::string serverIp;
+	std::string serverPort;
+	int workerThreadNum = 0;
+	int concurrentThreadNum = 0;
+	int maxSessions = 0;
+	int sendBufZero = 0;
+	int encoding = 0;
+	int nagle = 0;
+};
+
+struct ServerMetrics
+{
+	int acceptTPS = 0;
+	int recvMessageTPS = 0;
+	int sendMessageTPS = 0;
+	int disconnectCnt = 0;
+	int acceptTotal = 0;
+	int recvBytes = 0;
+	int sendBytes = 0;
+	int sessionCnt = 0;
+};
+
+class Session;
+class Serializer;
+class CMonitorThread;
+class CInternalSession;
+
+class CNetServer : public INetworkEntity
+{
+public:
+	friend class CMonitorThread;
+	friend class Session;
+	CNetServer(int concurrentThreadCnt, int totalThreadCnt, int maxSession);
+	virtual ~CNetServer();
+	
+	bool Start(const char* ip, const char* port, bool nagle, bool encoding, bool sendBufZero);
+	virtual void Stop();
+
+	virtual bool Disconnect(SessionId sessionId);
+	bool SendPacket(SessionId sessionId, Serializer* message);
+	bool SendPacketMultiCast(SessionId* group, int count, Serializer* message);
+
+	virtual bool OnConnectionRequest(const wchar_t* ip, unsigned short port) = 0;
+	virtual void OnAccept(SessionId sessionId, const wchar_t* ip, unsigned short port, void*& userData) = 0;
+	virtual void OnRelease(SessionId sessionId, void* userData) = 0;
+	virtual void OnRecv(SessionId sessionId, Serializer* packet) = 0;
+	virtual void OnPrintExternal(wchar_t** wstr, size_t* remaining);
+	virtual void OnError(NetError errCode, const char* errMsg);
+	virtual void OnCollectExternal(MetricsCollector& collector);
+
+	CInternalSession* GetServerContext();
+	void HandleInternalMessage(CInternalSession* session) override;
+	Session* CreateSession(SOCKET sock) override;
+	bool ReleaseSession(Session* session) override;
+	int GetSessionCount() { return _sessionCnt; }
+
+	long GetAcceptTPS() 
+	{ 
+		long acceptTps = InterlockedExchange(&_acceptCnt, 0);
+		InterlockedAdd(&_acceptTotal, acceptTps);
+		return acceptTps; 
+	}
+
+	long GetAcceptTotal() { return _acceptTotal; }
+	long GetRecvMessageTPS() { return (_worker) ? _worker->GetRecvMessageCnt() : 0; }
+	long GetSendMessageTPS() { return (_worker) ? _worker->GetSendMessageCnt() : 0; }
+	long GetRecvBytes() { return (_worker) ? _worker->GetRecvBytes() : 0; }
+	long GetSendBytes() { return (_worker) ? _worker->GetSendBytes() : 0; }
+	virtual void RefreshStatistics() { if (_worker) { _worker->RefreshStatistics(); } }
+
+	long GetDisconnectCount() { return _disconnectTotal; }
+
+	Session* GetSession(SessionId id)
+	{
+		Session* session = _sessions[id.internal.idx];
+		if (!session->AddRef())
+		{
+			session->ReleasePost();
+			return nullptr;
+		}
+
+		if (session->id != id || session->invalid)
+		{
+			session->ReleasePost();
+			return nullptr;
+		}
+
+		return session;
+	}
+
+	bool FreeSession(Session* session) { return session->ReleasePost(); }
+
+	CWorkerThread* Worker() { return _worker; }
+
+public:
+	bool _encoding;
+
+protected:
+	char _isRunning;
+	CWorkerThread* _worker;
+	CInternalSession* _serverContext;
+	ServerMetrics* _serverMetrics;
+
+private:
+	void AcceptThread();
+
+	SOCKET _listenSock;
+	long _acceptTotal;
+	long _acceptCnt;
+	long _disconnectTotal;
+	CThread* _acceptor;
+	std::vector<Session*> _sessions;
+	long _sessionCnt;
+	unsigned int _nextId;
+	int _maxSession = 0;
+	CLockFreeStack<int> _sessionIndexStack;
+};
