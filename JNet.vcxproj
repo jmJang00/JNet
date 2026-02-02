@@ -141,11 +141,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="include\JNet\CInternalSession.h" />
+    <ClInclude Include="include\JNet\CContentQueue.h" />
     <ClInclude Include="include\JNet\CNetClient.h" />
     <ClInclude Include="include\JNet\CNetServer.h" />
     <ClInclude Include="include\JNet\CMonitorThread.h" />
     <ClInclude Include="include\JNet\CObjectRingBuffer.h" />
     <ClInclude Include="include\JNet\CWorkerThread.h" />
+    <ClInclude Include="include\JNet\FContentHandle.h" />
     <ClInclude Include="include\JNet\INetworkEntity.h" />
     <ClInclude Include="include\JNet\Initialize.h" />
     <ClInclude Include="include\JNet\PacketHeader.h" />

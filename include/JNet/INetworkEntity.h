@@ -10,6 +10,7 @@ enum class NetError
 	INVALID_PACKET_HEADER,
 	PAKCET_CHECKSUM_MISMATCH,
 	PACKET_SIZE_LIMIT_EXCEEDED,
+	RECV_UNKNOWN_DEST_PACKET,
 };
 
 class INetworkEntity
@@ -20,7 +21,6 @@ public:
 	virtual void OnRecv(SessionId sessionId, Serializer* packet) = 0;
 	virtual void OnError(NetError errCode, const char* errMsg) = 0;
 	virtual bool Disconnect(SessionId sessionId) = 0;
-	virtual void HandleInternalMessage(CInternalSession* session) = 0;
 
 	virtual ~INetworkEntity() = default;
 };

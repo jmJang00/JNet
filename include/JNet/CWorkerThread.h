@@ -14,6 +14,7 @@ public:
 		SEND_START = 0xfff1,
 		RELEASE_SESSION = 0xfff2,
 		POST_MESSAGE = 0xfff3,
+		POST_CONTENT = 0xfff4,
 	};
 
 	CWorkerThread(int threadCnt, int concurrentThreadCnt);
@@ -58,4 +59,5 @@ public:
 	long _sendBytes;
 	long _recvMessageCnt;
 	long _sendMessageCnt;
+	long _chatResCnt;
 };

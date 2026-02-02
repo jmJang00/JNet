@@ -12,6 +12,10 @@
 MetricsCollector::MetricsCollector(std::vector<CNetServer*>& servers, const wchar_t* projectName)
 {
 	recordTime = time(nullptr);
+	SYSTEM_INFO si;
+	GetSystemInfo(&si);
+	numOfCore = si.dwNumberOfProcessors;
+
 	wchar_t assembleBuffer[ProjectConfig::AssembleBufferSize];
 	wchar_t* buffer = assembleBuffer;
 	buffer[0] = L'\0';
@@ -50,12 +54,31 @@ MetricsCollector::MetricsCollector(std::vector<CNetServer*>& servers, const wcha
 	APPEND_FORMAT(buffer, remaining, L"\\Process(%s)\\Virtual Bytes", projectName);
 	PdhAddCounter(pdhQuery, assembleBuffer, NULL, &virtualBytesCounter);
 
+	//buffer = assembleBuffer;
+	//buffer[0] = L'\0';
+	//remaining = sizeof(assembleBuffer);
+	//APPEND_FORMAT(buffer, remaining, L"\\Process(%s)\\%% User Time", projectName);
+	//PdhAddCounter(pdhQuery, assembleBuffer, NULL, &procUserCounter);
+
+	//buffer = assembleBuffer;
+	//buffer[0] = L'\0';
+	//remaining = sizeof(assembleBuffer);
+	//APPEND_FORMAT(buffer, remaining, L"\\Process(%s)\\%% Privileged Time", projectName);
+	//PdhAddCounter(pdhQuery, assembleBuffer, NULL, &procKernelCounter);
+
+	//PdhAddCounter(pdhQuery, L"\\Processor(_Total)\\% User Time", 0, &sysUserCounter);
+	//PdhAddCounter(pdhQuery, L"\\Processor(_Total)\\% Privileged Time", 0, &sysKernelCounter);
+
 	PdhAddCounter(pdhQuery, L"\\Memory\\Available MBytes", NULL, &availableMBytesCounter);
 	PdhAddCounter(pdhQuery, L"\\Memory\\Pool Nonpaged Bytes", NULL, &poolNonpagedBytesCounter);
 	PdhAddCounter(pdhQuery, L"\\Memory\\Committed Bytes", NULL, &committedBytesCounter);
 	PdhAddCounter(pdhQuery, L"\\Network Interface(*)\\Bytes Received/sec", 0, &rxCounter);
 	PdhAddCounter(pdhQuery, L"\\Network Interface(*)\\Bytes Sent/sec", 0, &txCounter);
 
+	//procUser = 0;
+	//procKernel = 0;
+	//sysUser = 0;
+	//sysKernel = 0;
 	privateBytes = 0;
 	nonpagedBytes = 0;
 	workingSetBytes = 0;
@@ -91,6 +114,8 @@ void MetricsCollector::Collect()
 	PDH_FMT_COUNTERVALUE committedBytesVal;
 	PDH_FMT_COUNTERVALUE rxVal;
 	PDH_FMT_COUNTERVALUE txVal;
+	//PDH_FMT_COUNTERVALUE vProcUser, vProcKernel;
+	//PDH_FMT_COUNTERVALUE vSysUser, vSysKernel;
 
 	PdhCollectQueryData(pdhQuery);
 
@@ -105,6 +130,10 @@ void MetricsCollector::Collect()
 	PdhGetFormattedCounterValue(committedBytesCounter, PDH_FMT_LARGE, NULL, &committedBytesVal);
 	PdhGetFormattedCounterValue(rxCounter, PDH_FMT_LARGE, NULL, &rxVal);
 	PdhGetFormattedCounterValue(txCounter, PDH_FMT_LARGE, NULL, &txVal);
+    //PdhGetFormattedCounterValue(procUserCounter, PDH_FMT_DOUBLE, NULL, &vProcUser);
+    //PdhGetFormattedCounterValue(procKernelCounter, PDH_FMT_DOUBLE, NULL, &vProcKernel);
+    //PdhGetFormattedCounterValue(sysUserCounter, PDH_FMT_DOUBLE, NULL, &vSysUser);
+    //PdhGetFormattedCounterValue(sysKernelCounter, PDH_FMT_DOUBLE, NULL, &vSysKernel);
 
 	privateBytes = privateBytesVal.longValue;
 	nonpagedBytes = nonpagedBytesVal.largeValue;
@@ -115,6 +144,10 @@ void MetricsCollector::Collect()
 	availableMBytes = availableMBytesVal.longValue;
 	poolNonpagedBytes = poolNonpagedBytesVal.largeValue;
 	committedBytes = committedBytesVal.largeValue;
+	//procUser = vProcUser.doubleValue / numOfCore;
+	//procKernel = vProcKernel.doubleValue / numOfCore;
+	//sysUser = vSysUser.doubleValue;
+	//sysKernel = vSysKernel.doubleValue;
 	rx = rxVal.largeValue;
 	tx = txVal.largeValue;
 
@@ -211,8 +244,12 @@ void CMonitorThread::MonitorThread()
 		if (deltaTick < 1000)
 		{
 			Sleep(1000 - deltaTick);
+			frameTick += 1000;
 		}
-		frameTick += 1000;
+		else
+		{
+			frameTick = tick;
+		}
 
 		collector.Collect();
 		for (int i = 0; i < _servers.size(); i++)
@@ -241,11 +278,11 @@ void CMonitorThread::MonitorThread()
 
 		APPEND_FORMAT(wstr, remaining, L"-----------------------------------------------------------------------------------------------\n");
 		APPEND_FORMAT(wstr, remaining, L" %-29s | %-29s | %-29s \n", 
-			L"[CPU Usage Process]", L"[CPU Usage System]", L"[Recv Bytes / Send Bytes]");
+			L"[CPU Usage System]", L"[CPU Usage Process]", L"[Recv Bytes / Send Bytes]");
 
 		APPEND_FORMAT(wstr, remaining, L" U:%6.2f%% K:%6.2f%% T:%6.2f%% | U:%6.2f%% K:%6.2f%% T:%6.2f%% | %-10.3lfKB/s %-10.3lfKB/s \n", 
-			collector.CPUTime.ProcessorUser(),  collector.CPUTime.ProcessorKernel(), collector.CPUTime.ProcessorTotal(), 
-			collector.CPUTime.ProcessUser(), collector.CPUTime.ProcessKernel(),  collector.CPUTime.ProcessTotal(), 
+			collector.CPUTime.ProcessorUser(), collector.CPUTime.ProcessorKernel(), collector.CPUTime.ProcessorTotal(),
+			collector.CPUTime.ProcessUser(),  collector.CPUTime.ProcessKernel(), collector.CPUTime.ProcessTotal(),
 			(double)collector.rx / 1000, (double)collector.tx / 1000);
 		APPEND_FORMAT(wstr, remaining, L"-----------------------------------------------------------------------------------------------\n");
 
@@ -291,11 +328,6 @@ void CMonitorThread::MonitorThread()
 			Logger::WriteLogFile(filePath, monitorBuffer, MONITOR_BUFFER_SIZE - (int)remaining);
 		}
 		printf("%ls", monitorBuffer);
-	}
-
-	for (int i = 0; i < _servers.size(); i++)
-	{
-		_servers[i]->RefreshStatistics();
 	}
 
 	delete[] monitorBuffer;

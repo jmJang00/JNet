@@ -4,6 +4,7 @@
 #include <JNet/SystemMessage.h>
 #include <JNet/CTimerManager.h>
 #include <JNet/CAppServer.h>
+#include <JNet/CContentQueue.h>
 #include "LogTag.h"
 
 CTimerThread::CTimerThread(CAppServer* server)
@@ -16,9 +17,15 @@ CTimerThread::CTimerThread(CAppServer* server)
 	Create(true);
 }
 
-void CTimerThread::Enqueue(FTimerNode* node)
+bool CTimerThread::Enqueue(FTimerNode* node)
 {
 	_lock.Lock();
+	if (GetContextPtr()->_bShutdown)
+	{
+		_lock.Unlock();
+		return false;
+	}
+
 	_timerQueue.push(node);
 	uint64 minMs = _timerQueue.top()->reserveMs;
 	if (minMs < _minMs)
@@ -30,6 +37,21 @@ void CTimerThread::Enqueue(FTimerNode* node)
 	else
 	{
 		_lock.Unlock();
+	}
+
+	return true;
+}
+
+void CTimerThread::Clear()
+{
+	CTimerManager* timerMng = _server->TimerMng();
+	CCSGuard gurad(&_lock);
+	while (_timerQueue.size())
+	{
+		FTimerNode* top = _timerQueue.top();
+		_timerQueue.pop();
+		timerMng->CancelPost(top->handle);
+		timerMng->Free(top);
 	}
 }
 
@@ -51,6 +73,8 @@ uint64 CTimerThread::GetCurrentTick64()
 
 void CTimerThread::Shutdown()
 {
+	CCSGuard gurad(&_lock);
+	CThread::Shutdown();
 	SetEvent(_hShutdownEvent);
 }
 
@@ -59,7 +83,7 @@ void CTimerThread::TimerThread()
 	uint64 tick;
 	FTimerNode* top;
 	unsigned int deltaTick = INFINITE;
-	CTimerManager* timerMng = _server->Timer();
+	CTimerManager* timerMng = _server->TimerMng();
 	HANDLE handles[2] = { _hShutdownEvent, _hEvent };
 
 	while (1)
@@ -67,6 +91,7 @@ void CTimerThread::TimerThread()
 		DWORD ret = WaitForMultipleObjects(2, handles, false, deltaTick);
 		if (ret == WAIT_OBJECT_0)
 		{
+			Clear();
 			break;
 		}
 
@@ -97,13 +122,9 @@ void CTimerThread::TimerThread()
 			CContent* content = top->content;
 			if (InterlockedExchange(&top->active, 0) == 1)
 			{
-				CInternalSession* context = content->GetContext();
-				context->PostTask(top->lambda);
-				context->PostLambda([content]()
-					{
-						content->Release();
-						content->_memoryLog[InterlockedIncrement(&content->_index) % 100] = "Reserve Post Release";
-					});
+				CContentQueue* context = content->GetContext();
+				context->PostJob(top->lambda);
+				context->PostJob(&CContent::Release);
 			}
 
 			timerMng->Free(top);

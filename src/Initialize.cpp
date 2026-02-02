@@ -22,7 +22,7 @@ void JNetInit::Initialize()
 		if (_init == 0)
 		{
 			JCoreInit::Initialize();
-			CInternalSession::_taskPool = new CTlsMemoryPool<FInternalTask>(PoolRegistry::RegisterDebugSign("FInternalTask"), false);
+			FInternalTask::_taskPool = new CTlsMemoryPool<FInternalTask>(PoolRegistry::RegisterDebugSign("FInternalTask"), false);
 			timeBeginPeriod(1);
 			WSADATA wsa;
 			if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -48,7 +48,7 @@ void JNetInit::Release()
 
 		if (_init == 1)
 		{
-			delete CInternalSession::_taskPool;
+			delete FInternalTask::_taskPool;
 			timeEndPeriod(1);
 			WSACleanup();
 			InterlockedExchange(&_init, 0);

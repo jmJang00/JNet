@@ -1,16 +1,86 @@
 #pragma once
+#include <vector>
 #include <JNet/Session.h>
+#include <JNet/FContentHandle.h>
+#include <JCore/CLockFreeStack.h>
+#include <JNet/CContent.h>
 
-class CContent;
 class CAppServer;
+class CContentManager;
+
+struct FContentNode
+{
+	FContentHandle handle;
+	long refCnt;
+	CContent* content;
+
+	FContentNode();
+	void Init(CContent* c);
+	void Reset();
+	bool AddRef();
+	bool Release();
+};
 
 class CContentManager
 {
 public:
-	CContentManager(CAppServer* server);
+	friend class CContent;
+
+	CContentManager(CAppServer* server, int maxContentCnt);
 	~CContentManager();
-	bool Register(CContent* content);
-	bool Unregister(CContent* content);
-	bool MoveTo(SessionId id, CContent* to);
+	FContentHandle Register(CContent* content);
+	bool Unregister(FContentHandle handle);
+	FContentNode* Alloc(CContent* inContent);
+	void Free(FContentNode* node);
+
+	template <typename ContentType, typename MemFunc, typename... Args>
+	bool Execute(long statusMask, FContentHandle handle, MemFunc func, Args&&... args)
+	{
+		FContentNode* node = GetContent(handle);
+		if (node == nullptr)
+		{
+			return false;
+		}
+
+		if (!(node->content->_registered & statusMask))
+		{
+			return false;
+		}
+
+		ContentType* content = static_cast<ContentType*>(node->content);
+		(content->*func)(std::forward<Args>(args)...);
+		FreeContent(node);
+		return true;
+	}
+
+	template <typename ContentType, typename MemFunc, typename... Args>
+	bool Execute(FContentHandle handle, MemFunc func, Args&&... args)
+	{
+		FContentNode* node = GetContent(handle);
+		if (node == nullptr)
+		{
+			return false;
+		}
+
+		ContentType* content = static_cast<ContentType*>(node->content);
+		(content->*func)(std::forward<Args>(args)...);
+		FreeContent(node);
+		return true;
+	}
+
+	bool MoveTo(SessionId id, FContentHandle to);
 	CAppServer* _server;
+
+public:
+	FContentNode* GetContent(FContentHandle handle);
+	void FreeContent(FContentNode* node);
+
+private:
+	FContentNode* GetContentUnsafe(FContentHandle handle);
+
+private:
+	long _nextId;
+	long _maxContentCnt;
+	std::vector<FContentNode> _contentPool;
+	CLockFreeStack<int> _contentIdxStack;
 };

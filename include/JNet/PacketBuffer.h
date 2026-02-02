@@ -16,6 +16,7 @@ public:
 	void Clear()
 	{
 		_refCnt = 0;
+		_packetType = 0;
 		_hasHeader = false;
 	}
 
@@ -40,6 +41,9 @@ public:
 	{
 		return _pool.GetAllocCount();
 	}
+
+public:
+	int _packetType;
 
 private:
 

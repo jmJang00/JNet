@@ -14,6 +14,7 @@ public:
 	void Collect();
 
 public:
+	DWORD numOfCore;
 	time_t recordTime;
 	CCpuUsage CPUTime;
 	int privateBytes;
@@ -35,6 +36,10 @@ public:
 	int sendBufferPoolCnt;
 	long long rx;
 	long long tx;
+	//double procUser;
+	//double procKernel;
+	//double sysUser;
+	//double sysKernel;
 	std::vector<std::pair<int, int>>  bucketPool;
 
 private:
@@ -48,6 +53,10 @@ private:
 	PDH_HCOUNTER availableMBytesCounter;
 	PDH_HCOUNTER poolNonpagedBytesCounter;
 	PDH_HCOUNTER committedBytesCounter;
+	//PDH_HCOUNTER procUserCounter;
+	//PDH_HCOUNTER procKernelCounter;
+	//PDH_HCOUNTER sysUserCounter;
+	//PDH_HCOUNTER sysKernelCounter;
 	PDH_HCOUNTER rxCounter;
 	PDH_HCOUNTER txCounter;
 	PDH_HQUERY pdhQuery;

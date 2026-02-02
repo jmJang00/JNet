@@ -16,7 +16,7 @@ CNetClient::CNetClient(CWorkerThread* worker)
 	, _encoding(false)
 {
 	_session = new Session();
-	_clientContext = new CInternalSession(worker, this, 1000);
+	_clientContext = new CInternalSession(worker, 1000);
 }
 
 CNetClient::~CNetClient()
@@ -156,7 +156,6 @@ void CNetClient::Clear()
 		Sleep(100);
 	}
 
-	RefreshStatistics();
 	_encoding = false;
 }
 
@@ -177,7 +176,7 @@ Session* CNetClient::CreateSession(SOCKET sock)
 		return nullptr;
 	}
 
-	_session->Start(sock, _worker->_hIOCP, this, sessionId, _encoding);
+	_session->Start(sock, _worker->_hIOCP, this, nullptr, sessionId, _encoding);
 
 	_isRunning = true;
 
@@ -186,8 +185,8 @@ Session* CNetClient::CreateSession(SOCKET sock)
 
 bool CNetClient::ReleaseSession(Session* session)
 {
-	session->Reset();
 	OnLeaveServer();
+	session->Reset();
 	_isRunning = false;
 	return true;
 }
@@ -200,29 +199,6 @@ bool CNetClient::IsConnected()
 CInternalSession* CNetClient::GetClientContext()
 {
 	return _clientContext;
-}
-
-void CNetClient::HandleInternalMessage(CInternalSession* session)
-{
-	session->Execute();
-}
-
-unsigned long long CNetClient::GetRecvMessageTPS()
-{
-	return _worker->GetRecvMessageCnt();
-}
-
-unsigned long long CNetClient::GetSendMessageTPS()
-{
-	return _worker->GetSendMessageCnt();
-}
-
-void CNetClient::RefreshStatistics()
-{
-	if (_worker)
-	{
-		_worker->RefreshStatistics();
-	}
 }
 
 bool CNetClient::Disconnect(SessionId sessionId)

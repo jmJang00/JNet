@@ -57,9 +57,7 @@ void CTimerManager::CancelPost(FTimerHandle handle)
 	{
 		if (InterlockedExchange(&node->active, 0) == 1)
 		{
-			CInternalSession::ReleaseTask(node->lambda);
 			node->content->Release();
-			node->content->_memoryLog[InterlockedIncrement(&node->content->_index) % 100] = "Reserve Post Remote Release";
 		}
 	}
 }

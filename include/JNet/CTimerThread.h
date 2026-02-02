@@ -13,6 +13,16 @@ class CContent;
 
 struct FTimerHandle
 {
+	FTimerHandle(unsigned long long value)
+	{
+		handle = value;
+	}
+
+	FTimerHandle()
+	{
+		handle = 0;
+	}
+
 	enum : unsigned long long
 	{
 		INVALID_HANDLE = 0xFFFFFFFFFFFFFFFF
@@ -30,11 +40,13 @@ struct FTimerHandle
 
 struct FTimerNode
 {
+	using Func = void(CContent::*)(void);
+
 	FTimerHandle handle;
 	uint64 reserveMs;
 	long active;
 	CContent* content;
-	FInternalTask* lambda;
+	Func lambda;
 
 	bool operator<(const FTimerNode& other)
 	{
@@ -57,7 +69,9 @@ public:
 
 	static uint64 GetCurrentTick64();
 
-	void Enqueue(FTimerNode* node);
+	bool Enqueue(FTimerNode* node);
+
+	void Clear();
 
 	void Shutdown() override;
 

@@ -1,11 +1,13 @@
 #include "pch.h"
 #include <map>
+#include <algorithm>
 #include <JCore/SLog.h>
 #include <JCore/Profiler.h>
 #include <JNet/Session.h>
 #include <JNet/CNetServer.h>
 #include <JNet/Serializer.h>
 #include <JNet/CContent.h>
+#include <JNet/CContentManager.h>
 #include "LogTag.h"
 
 thread_local std::vector<SessionId> gSessionIdVector;
@@ -18,6 +20,10 @@ Session::Session()
 	, recvBuf(nullptr)
 	, user(nullptr)
 	, contentQ(1000)
+	, content(FContentHandle::NONE)
+#ifdef SESSION_DEBUG
+	, debugIndex(-1)
+#endif
 {
 	sendOverlapped = new OverlappedEx();
 	recvOverlapped = new OverlappedEx();
@@ -32,6 +38,10 @@ Session::Session(INetworkEntity* owner)
 	, recvBuf(nullptr)
 	, user(nullptr)
 	, contentQ(1000)
+	, content(FContentHandle::NONE)
+#ifdef SESSION_DEBUG
+	, debugIndex(-1)
+#endif
 {
 	sendOverlapped = new OverlappedEx();
 	recvOverlapped = new OverlappedEx();
@@ -48,7 +58,7 @@ Session::~Session()
 	pendingBuffer = nullptr;
 }
 
-void Session::Start(SOCKET socket, HANDLE iocp, INetworkEntity* caller, SessionId sessionId, bool crypt)
+void Session::Start(SOCKET socket, HANDLE iocp, INetworkEntity* caller, CContentManager* mng, SessionId sessionId, bool crypt)
 {
 	SOCKADDR_IN clientAddr;
 	sock = socket;
@@ -65,16 +75,22 @@ void Session::Start(SOCKET socket, HANDLE iocp, INetworkEntity* caller, SessionI
 	assembleCnt = 0;
 	InterlockedExchange((uintptr_t*)&content, (uintptr_t)nullptr);
 	encoding = crypt;
+	manager = mng;
 
 	sendBuf.Clear();
 	owner = caller;
 	memset(pendingBuffer, 0, PENDING_BUFFER_SIZE * sizeof(*pendingBuffer));
 	recvBuf = Serializer::Alloc(PacketBuffer::Alloc());
 	InterlockedExchange(&sending, 0);
-	InterlockedAdd(&refCnt, 0x80000001);
+	InterlockedExchange(&sendRequest, 0);
 	InterlockedExchange(&invalid, 0);
 	InterlockedExchange(&disconnect, 0);
 	InterlockedExchange(&id.total, sessionId.total);
+	InterlockedAdd(&refCnt, 0x80000001);
+
+#ifdef SESSION_DEBUG
+	debug[(InterlockedIncrement(&debugIndex)) % 100] = "Start";
+#endif
 }
 
 void Session::Reset()
@@ -105,13 +121,31 @@ void Session::Reset()
 		contentQ.Dequeue(&buffer);
 		Serializer::Free(buffer);
 	}
-	content = nullptr;
+
+	content.handle = FContentHandle::NONE;
+	manager = nullptr;
+	user = nullptr;
 	closesocket(sock);
+
+#ifdef SESSION_DEBUG
+	debug[(InterlockedIncrement(&debugIndex)) % 100] = "Reset";
+#endif
 }
 
 bool Session::SendPost()
 {
-	int bufCnt = min(sendBuf.GetSize(), PENDING_BUFFER_SIZE);
+	if (!AddRef())
+	{
+		CRASH(true);
+	}
+
+	if (InterlockedExchange(&sending, 1) == 1)
+	{
+		Release();
+		return false;
+	}
+
+	int bufCnt = std::min((int)sendBuf.GetSize(), PENDING_BUFFER_SIZE);
 	int deqCnt = bufCnt;
 	Serializer** bufferPtr = &pendingBuffer[0];
 	while (deqCnt > 0)
@@ -138,10 +172,11 @@ bool Session::SendPost()
 	char dummy = 0;
 	if (bufCnt == 0)
 	{
-		//wsaBuf[0].buf = &dummy;
-		//wsaBuf[0].len = 0;
-		//bufCnt = 1;
-		PostQueuedCompletionStatus(hIOCP, 0, (ULONG_PTR)this, (LPOVERLAPPED)CWorkerThread::SEND_START);
+#ifdef SESSION_DEBUG
+		debug[(InterlockedIncrement(&debugIndex)) % 100] = "SendPost 0";
+#endif
+		InterlockedExchange(&sending, 0);
+		Release();
 		return true;
 	}
 
@@ -167,7 +202,12 @@ bool Session::SendPost()
 				SLOGA(JNetLog::Network, L"WSASend() [%d]", errCode);
 			}
 
+#ifdef SESSION_DEBUG
+			debug[(InterlockedIncrement(&debugIndex)) % 100] = "SendPost Error";
+#endif
+
 			InterlockedExchange(&invalid, 1);
+			Release();
 			//SLOG(L"# 송신 에러, sessionId:%d, sock:%d, ip:%ls, port:%d\n", id, sock, ip, port);
 			return false;
 		}
@@ -195,8 +235,11 @@ bool Session::Release()
 	{
 		if (InterlockedCompareExchange(&refCnt, 0, 0x80000000) == 0x80000000)
 		{
-			CContent* con = (CContent*)InterlockedOr((uintptr_t*)&content, (uintptr_t)0);
-			if (con == nullptr)
+#ifdef SESSION_DEBUG
+			debug[(InterlockedIncrement(&debugIndex)) % 100] = "Release";
+#endif
+			FContentHandle con = (FContentHandle)InterlockedOr((uintptr_t*)&content, (uintptr_t)0);
+			if (con.handle == FContentHandle::NONE)
 			{
 				owner->ReleaseSession(this);
 			}
@@ -205,7 +248,11 @@ bool Session::Release()
 				FSystemMessage msg;
 				msg.type = ESystemMessageType::MSG_RELEASE;
 				msg.session = this;
-				con->Enqueue(&msg);
+				if (!manager->Execute<CContent>(CContent::Running | CContent::Closing, 
+					con, &CContent::Enqueue, &msg))
+				{
+					owner->ReleaseSession(this);
+				}
 			}
 			return true;
 		}
@@ -221,6 +268,9 @@ bool Session::ReleasePost()
 	{
 		if (InterlockedCompareExchange(&refCnt, 0, 0x80000000) == 0x80000000)
 		{
+#ifdef SESSION_DEBUG
+			debug[(InterlockedIncrement(&debugIndex)) % 100] = "Releae Post";
+#endif
 			PostQueuedCompletionStatus(hIOCP, 0, (ULONG_PTR)this, (LPOVERLAPPED)CWorkerThread::RELEASE_SESSION);
 			return true;
 		}
@@ -255,6 +305,10 @@ bool Session::RecvPost()
 			{
 				SLOGA(JNetLog::Network, L"WSARecv() [%d]", errCode);
 			}
+
+#ifdef SESSION_DEBUG
+	debug[(InterlockedIncrement(&debugIndex)) % 100] = "Recv Error";
+#endif
 
 			InterlockedExchange(&invalid, 1);
 			//SLOG(L"# 수신 에러, sessionId:%d, sock:%d, ip:%ls, port:%d\n", id, sock, ip, port);

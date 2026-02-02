@@ -78,6 +78,12 @@
     <ClInclude Include="include\JNet\Initialize.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\JNet\FContentHandle.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\JNet\CContentQueue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\pch.cpp">

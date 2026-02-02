@@ -7,6 +7,8 @@
 #include <JNet/INetworkEntity.h>
 #include <JNet/CInternalSession.h>
 #include <JNet/CContent.h>
+#include <JNet/CContentManager.h>
+#include <JNet/CContentQueue.h>
 #include "LogTag.h"
 
 CWorkerThread::CWorkerThread(int threadCnt, int concurrentThreadCnt)
@@ -17,6 +19,7 @@ CWorkerThread::CWorkerThread(int threadCnt, int concurrentThreadCnt)
 	, _recvMessageCnt(0)
 	, _sendMessageCnt(0)
 	, _threadCnt(threadCnt)
+	, _chatResCnt(0)
 {
 	_hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, concurrentThreadCnt);
 	if (_hIOCP == NULL)
@@ -126,11 +129,20 @@ void CWorkerThread::RecvProcDecoding(Session* session)
 
 		InterlockedIncrement(&_recvMessageCnt);
 		msg->MoveReadPos(sizeof(header));
-		CContent* content;
-		content = (CContent*)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
-		if (content == nullptr)
+		FContentHandle content(0);
+		content = (FContentHandle)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
+		if (content == FContentHandle::NONE)
 		{
-			owner->OnRecv(session->id, msg);
+			if (session->contentQ.GetSize() > 0)
+			{
+				owner->OnError(NetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
+				owner->Disconnect(session->id);
+				return;
+			}
+			else
+			{
+				owner->OnRecv(session->id, msg);
+			}
 		}
 		else
 		{
@@ -148,6 +160,7 @@ void CWorkerThread::RecvProcDecoding(Session* session)
 		{
 			owner->OnError(NetError::PACKET_SIZE_LIMIT_EXCEEDED, "RecvProc(): Packet size exceeds recv buffer limit");
 			owner->Disconnect(session->id);
+			return;
 		}
 		else
 		{
@@ -201,7 +214,16 @@ void CWorkerThread::RecvProc(Session* session)
 		content = (CContent*)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
 		if (content == nullptr)
 		{
-			owner->OnRecv(session->id, msg);
+			if (session->contentQ.GetSize() > 0)
+			{
+				owner->OnError(NetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
+				owner->Disconnect(session->id);
+				return;
+			}
+			else
+			{
+				owner->OnRecv(session->id, msg);
+			}
 		}
 		else
 		{
@@ -254,42 +276,27 @@ void CWorkerThread::WorkerThread()
 		case SEND_START:
 		{
 			session = (Session*)compKey;
+			InterlockedExchange(&session->sendRequest, 0);
 
-			InterlockedExchange(&session->sending, 0);
-
-			if (session->sendBuf.GetSize() > 0 && session->invalid == 0)
+			while (session->sendBuf.GetSize() > 0 && session->invalid == 0)
 			{
-				if (!session->AddRef())
+				if (session->SendPost())
 				{
-					session->Release();
-					session->Release();
-					continue;
-				}
-
-				if (InterlockedExchange(&session->sending, 1) == 0)
-				{
-					if (session->SendPost())
+					if (session->sending == 0)
 					{
-						if (session->invalid == 1)
-						{
-							CancelIoEx((HANDLE)session->sock,
-								(OVERLAPPED*)session->sendOverlapped);
-						}
+						continue;
 					}
-					else
+
+					if (session->invalid == 1)
 					{
-						if (session->Release())
-						{
-							CRASH(true);
-						}
+						CancelIoEx((HANDLE)session->sock,
+							(OVERLAPPED*)session->sendOverlapped);
+						break;
 					}
 				}
 				else
 				{
-					if (session->Release())
-					{
-						CRASH(true);
-					}
+					break;
 				}
 			}
 			session->Release();
@@ -299,8 +306,8 @@ void CWorkerThread::WorkerThread()
 		{
 			session = (Session*)compKey;
 			owner = session->owner;
-			CContent* content = (CContent*)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
-			if (content == nullptr)
+			FContentHandle content = (FContentHandle)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
+			if (content == FContentHandle::NONE)
 			{
 				owner->ReleaseSession(session);
 			}
@@ -309,15 +316,24 @@ void CWorkerThread::WorkerThread()
 				FSystemMessage msg;
 				msg.type = ESystemMessageType::MSG_RELEASE;
 				msg.session = session;
-				content->Enqueue(&msg);
+				if (!session->manager->Execute<CContent>(CContent::Running | CContent::Closing, 
+					content, &CContent::Enqueue, &msg))
+				{
+					owner->ReleaseSession(session);
+				}
 			}
 			continue;
 		}
 		case POST_MESSAGE:
 		{
 			CInternalSession* internalSession = (CInternalSession*)compKey;
-			owner = internalSession->GetOwner();
-			owner->HandleInternalMessage(internalSession);
+			internalSession->Execute();
+			continue;
+		}
+		case POST_CONTENT:
+		{
+			CContentQueue* content = (CContentQueue*)compKey;
+			content->Execute();
 			continue;
 		}
 		default:
@@ -351,9 +367,7 @@ void CWorkerThread::WorkerThread()
 			{
 				if (!session->AddRef())
 				{
-					session->Release();
-					session->Release();
-					continue;
+					CRASH(true);
 				}
 
 				if (session->RecvPost())
@@ -366,10 +380,7 @@ void CWorkerThread::WorkerThread()
 				}
 				else
 				{
-					if (session->Release())
-					{
-						CRASH(true);
-					}
+					session->Release();
 				}
 			}
 		}
@@ -389,6 +400,11 @@ void CWorkerThread::WorkerThread()
 				int bufCnt = overlapped->bufCnt;
 				for (int i = 0; i < bufCnt; ++i)
 				{
+					if (session->pendingBuffer[i]->GetPacketBuffer()->_packetType == 6)
+					{
+						InterlockedIncrement(&_chatResCnt);
+					}
+
 					Serializer::Free(session->pendingBuffer[i]);
 					session->pendingBuffer[i] = nullptr;
 				}
@@ -400,39 +416,25 @@ void CWorkerThread::WorkerThread()
 
 			InterlockedExchange(&session->sending, 0);
 
-			if (session->sendBuf.GetSize() > 0 && session->invalid == 0)
+			while (session->sendBuf.GetSize() > 0 && session->invalid == 0)
 			{
-				if (!session->AddRef())
+				if (session->SendPost())
 				{
-					session->Release();
-					session->Release();
-					continue;
-				}
-
-				if (InterlockedExchange(&session->sending, 1) == 0)
-				{
-					if (session->SendPost())
+					if (session->sending == 0)
 					{
-						if (session->invalid == 1)
-						{
-							CancelIoEx((HANDLE)session->sock,
-								(OVERLAPPED*)session->sendOverlapped);
-						}
+						continue;
 					}
-					else
+
+					if (session->invalid == 1)
 					{
-						if (session->Release())
-						{
-							CRASH(true);
-						}
+						CancelIoEx((HANDLE)session->sock,
+							(OVERLAPPED*)session->sendOverlapped);
+						break;
 					}
 				}
 				else
 				{
-					if (session->Release())
-					{
-						CRASH(true);
-					}
+					break;
 				}
 			}
 		}

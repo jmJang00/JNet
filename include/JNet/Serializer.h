@@ -29,7 +29,7 @@ public:
 		, _readPos(0)
 		, _writePos(0)
 		, _err(Default)
-		, _seq(0)
+		, _recvTime(0)
 	{
 		CRASH(true);
 	}
@@ -39,7 +39,7 @@ public:
 		, _readPos(0)
 		, _writePos(0)
 		, _err(Default)
-		, _seq(0)
+		, _recvTime(0)
 	{
 		_packetBuffer->AddRef();
 	}
@@ -49,7 +49,7 @@ public:
 		, _readPos(readPos)
 		, _writePos(writePos)
 		, _err(Default)
-		, _seq(0)
+		, _recvTime(0)
 	{
 		_packetBuffer->AddRef();
 	}
@@ -59,7 +59,7 @@ public:
 		, _readPos(serializer._readPos)
 		, _writePos(serializer._writePos)
 		, _err(Default)
-		, _seq(0)
+		, _recvTime(0)
 	{
 		//TODO: 카피 잘 되는지 테스트
 		_packetBuffer->AddRef();
@@ -281,8 +281,8 @@ public:
 	}
 
 public:
-	int _seq;
 	unsigned int _recvTime;
+
 protected:
 	PacketBuffer* _packetBuffer;
 	int _err;
@@ -290,18 +290,5 @@ protected:
 	int _writePos;
 	static CTlsMemoryPool<Serializer> _pool;
 	static CRWLock _poolLock;
-};
-
-struct CompareSerializer
-{
-	bool operator() (const Serializer* a, const Serializer* b) const
-	{
-		if (a != nullptr && b != nullptr)
-		{
-			return a->_seq > b->_seq;
-		}
-
-		return false;
-	}
 };
 

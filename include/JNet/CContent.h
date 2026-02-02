@@ -3,21 +3,34 @@
 #include <array>
 #include <utility>
 #include <JNet/Session.h>
-#include <JNet/CInternalSession.h>
+#include <JNet/CContentQueue.h>
 #include <JCore/CLockFreeQueue.h>
+#include <JCore/ScopedLock.h>
 #include <JNet/CAppServer.h>
 #include <JNet/CTimerThread.h>
 #include <JNet/CTimerManager.h>
 #include <JNet/SystemMessage.h>
+#include <JNet/CInternalSession.h>
 
 class CInternalSession;
 class CWorkerThread;
 class CAppServer;
+class CContentManager;
+struct FContentNode;
 
 class CContent
 {
 public:
 	friend class CContentManager;
+	friend struct FContentNode;
+
+	enum EContentStatus : long
+	{
+		Cleared = 0,
+		Initializing = 1,
+		Running = 2,
+		Closing = 4,
+	};
 
 	CContent(CAppServer* server, int frameMs);
 	~CContent();
@@ -29,103 +42,66 @@ public:
 	virtual void OnLeave(SessionId sessionId, void*& userData) = 0;
 
 	template <typename Lambda>
-	bool Execute(Lambda&& func)
+	bool RequestExternal(Lambda&& func)
 	{
 		if (_shutdown)
 		{
 			return false;
 		}
 
-		_memoryLog[InterlockedIncrement(&_index) % 100] = "Execute AddRef";
-		if (!AddRef())
+		FInternalTask* task = FInternalTask::CreateTask(std::forward<Lambda>(func));
+
+		if (!_requestQ.Enqueue(task))
 		{
-			Release();
-			_memoryLog[InterlockedIncrement(&_index) % 100] = "Execute Release";
+			FInternalTask::ReleaseTask(task);
 			return false;
 		}
-
-		_context->PostLambda(std::forward<Lambda>(func));
-		_context->PostLambda([this]()
-			{
-				Release();
-				_memoryLog[InterlockedIncrement(&_index) % 100] = "Execute Post Release";
-			});
-
-		_memoryLog[InterlockedIncrement(&_index) % 100] = "Execute Post Success";
 
 		return true;
 	}
 
-	bool Enqueue(FSystemMessage* msg)
-	{
-		return _updateQ.Enqueue(*msg);
-	}
-
-	CInternalSession* GetContext()
-	{
-		return _context;
-	}
-
+public:
+	FContentHandle GetHandle();
+	void Init(FContentNode* node);
 	bool AddRef();
-	bool Release();
+	void Release();
 	void WaitStartEvent();
 	void WaitStopEvent();
 	void BeginShutdown();
 	void EndShutdown();
+	void Enqueue(FSystemMessage* msg) { _updateQ.ForceEnqueue(*msg); }
+	CContentQueue* GetContext() { return _context; }
 
 protected:
-	template <typename Lambda>
-	bool Reserve(int ms, Lambda&& lambda)
-	{
-		if (_shutdown)
-		{
-			return false;
-		}
-
-		_memoryLog[InterlockedIncrement(&_index) % 100] = "Reserve AddRef";
-		if (!AddRef())
-		{
-			Release();
-			_memoryLog[InterlockedIncrement(&_index) % 100] = "Reserve Release";
-			return false;
-		}
-
-		FTimerHandle handle = _server->Timer()->PostAfterInternal(ms, this, std::forward<Lambda>(lambda));
-		if (handle.handle == FTimerHandle::INVALID_HANDLE)
-		{
-			Release();
-			_memoryLog[InterlockedIncrement(&_index) % 100] = "Reserve Release Post Fail";
-			return false;
-		}
-
-		_memoryLog[InterlockedIncrement(&_index) % 100] = "Reserve Post Success";
-
-		_timers.push_back(handle);
-
-		return true;
-	}
-
-	void ClearInvalidHandles();
-
-public:
-	std::array<const char*, 100> _memoryLog;
-	long _index = -1;
+	bool Reserve(CContentQueue::Func func);
+	bool Reserve(int ms, CContentQueue::Func func);
 
 private:
+	void Enter(Session* session);
+	void Leave(Session* session);
 	void Update();
 	void Start();
-	void Stop();
+	void ClearInvalidHandles();
+	void ClearRequest();
+	void ProcessRequest();
+	void ProcessUpdateQueue();
+	void ClearSession();
+	void Reset();
 
+private:
 	CAppServer* _server;
-	CInternalSession* _context;
-	std::vector<FTimerHandle> _timers;
+	CContentQueue* _context;
+	FContentNode* _node;
 	HANDLE _startEvent;
 	HANDLE _endEvent;
 	bool _shutdown;
+	long _registered;
 	unsigned int _frameTick;
 	unsigned int _oldTick;
 	int _frameMs;
 	long _timerRefCnt;
 	CLockFreeQueue<FSystemMessage> _updateQ;
+	CLockFreeQueue<FTimerHandle> _timers;
+	CLockFreeQueue<FInternalTask*> _requestQ;
 	std::unordered_map<SessionId, Session*> _sessionMap;
 };

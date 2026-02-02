@@ -3,7 +3,7 @@
 #include <JCore/SLog.h>
 #include "LogTag.h"
 
-CTlsMemoryPool<FInternalTask>* CInternalSession::_taskPool;
+CTlsMemoryPool<FInternalTask>* FInternalTask::_taskPool;
 
 void CInternalSession::Suspend()
 {

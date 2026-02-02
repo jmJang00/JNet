@@ -2,7 +2,9 @@
 #include <map>
 #include <vector>
 #include <stack>
+#include <array>
 #include <JCore/CLockFreeStack.h>
+#include <JCore/CLockFreeQueue.h>
 #include <JNet/Session.h>
 #include <JNet/INetworkEntity.h>
 #include <JNet/PacketHeader.h>
@@ -62,7 +64,6 @@ public:
 	virtual void OnCollectExternal(MetricsCollector& collector);
 
 	CInternalSession* GetServerContext();
-	void HandleInternalMessage(CInternalSession* session) override;
 	Session* CreateSession(SOCKET sock) override;
 	bool ReleaseSession(Session* session) override;
 	int GetSessionCount() { return _sessionCnt; }
@@ -113,6 +114,11 @@ protected:
 	CWorkerThread* _worker;
 	CInternalSession* _serverContext;
 	ServerMetrics* _serverMetrics;
+	long _sessionCnt;
+	int _maxSession = 0;
+	unsigned int _nextId;
+	CLockFreeStack<int> _sessionIndexStack;
+	std::vector<Session*> _sessions;
 
 private:
 	void AcceptThread();
@@ -122,9 +128,4 @@ private:
 	long _acceptCnt;
 	long _disconnectTotal;
 	CThread* _acceptor;
-	std::vector<Session*> _sessions;
-	long _sessionCnt;
-	unsigned int _nextId;
-	int _maxSession = 0;
-	CLockFreeStack<int> _sessionIndexStack;
 };

@@ -13,34 +13,8 @@ struct FInternalTask
 	alignas(16) int8 data[64];
 	func_type invoke;
 	func_type destroy;
-};
 
-class JNetInit;
-
-class CInternalSession
-{
-public:
-	friend class JNetInit;
 	static constexpr int SLOT_SIZE = 64;
-
-	CInternalSession(CWorkerThread* context, INetworkEntity* owner, int32 maxTaskCnt)
-		: _buffer(maxTaskCnt)
-		, _context(context)
-		, _processing(0)
-		, _shutdown(0)
-		, _owner(owner)
-	{
-	}
-
-	~CInternalSession()
-	{
-		ClearPendingTasks();
-	}
-
-	INetworkEntity* GetOwner()
-	{
-		return _owner;
-	}
 
 	template <typename Lambda>
 	static FInternalTask* CreateTask(Lambda&& func)
@@ -70,6 +44,34 @@ public:
 		_taskPool->Free(task);
 	}
 
+	void Invoke()
+	{
+		invoke(data);
+	}
+
+	static CTlsMemoryPool<FInternalTask>* _taskPool;
+};
+
+class JNetInit;
+
+class CInternalSession
+{
+public:
+	friend class JNetInit;
+
+	CInternalSession(CWorkerThread* context, int32 maxTaskCnt)
+		: _buffer(maxTaskCnt)
+		, _context(context)
+		, _processing(0)
+		, _shutdown(0)
+	{
+	}
+
+	~CInternalSession()
+	{
+		ClearPendingTasks();
+	}
+
 	template <typename Lambda>
 	bool PostLambda(Lambda&& func)
 	{
@@ -78,11 +80,11 @@ public:
 			return false;
 		}
 
-		FInternalTask* task = CreateTask(std::forward<Lambda>(func));
+		FInternalTask* task = FInternalTask::CreateTask(std::forward<Lambda>(func));
 
 		if (!PostTask(task))
 		{
-			ReleaseTask(task);
+			FInternalTask::ReleaseTask(task);
 			return false;
 		}
 
@@ -135,7 +137,7 @@ public:
 				break;
 			}
 
-			ReleaseTask(task);
+			FInternalTask::ReleaseTask(task);
 		}
 	}
 
@@ -169,12 +171,12 @@ public:
 
 			if (_shutdown)
 			{
-				ReleaseTask(task);
+				FInternalTask::ReleaseTask(task);
 				continue;
 			}
 
 			task->invoke(task->data);
-			ReleaseTask(task);
+			FInternalTask::ReleaseTask(task);
 		}
 
 		InterlockedExchange8(&_processing, 0);
@@ -191,9 +193,7 @@ public:
 private:
 	CRWLock _lock;
 	CWorkerThread* _context;
-	INetworkEntity* _owner;
 	CLockFreeQueue<FInternalTask*> _buffer;
-	static CTlsMemoryPool<FInternalTask>* _taskPool;
 	int8 _processing;
 	int8 _shutdown;
 };

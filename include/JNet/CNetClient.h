@@ -31,11 +31,6 @@ public:
 	bool IsConnected();
 
 	CInternalSession* GetClientContext();
-	void HandleInternalMessage(CInternalSession* session) override;
-
-	unsigned long long GetRecvMessageTPS();
-	unsigned long long GetSendMessageTPS();
-	void RefreshStatistics();
 
 protected:
 	bool8 _encoding;

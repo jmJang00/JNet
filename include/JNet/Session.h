@@ -1,7 +1,9 @@
 #pragma once
+#include <array>
 #include <JCore/JWindows.h>
 #include <JCore/CLockFreeQueue.h>
 #include <JCore/SLog.h>
+#include <JNet/FContentHandle.h>
 
 class Session;
 class Serializer;
@@ -10,6 +12,7 @@ class INetworkEntity;
 class CLoginThread;
 class MonitorNode;
 class CContent;
+class CContentManager;
 
 struct OverlappedEx
 {
@@ -69,6 +72,7 @@ namespace std
 	};
 }
 
+//#define SESSION_DEBUG 
 
 class Session
 {
@@ -85,7 +89,7 @@ public:
 
 	~Session();
 
-	void Start(SOCKET socket, HANDLE iocp, INetworkEntity* caller, SessionId sessionId, bool crypt);
+	void Start(SOCKET socket, HANDLE iocp, INetworkEntity* caller, CContentManager* mng, SessionId sessionId, bool crypt);
 
 	void Reset();
 
@@ -100,6 +104,11 @@ public:
 	bool ReleasePost();
 
 	SessionId id = { 0 };
+	long refCnt = 0;
+	long disconnect = 0;
+	long sending = 0;
+	long sendRequest = 0;
+	long invalid = 0;
 	INetworkEntity* owner = nullptr;
 	OverlappedEx* sendOverlapped = nullptr;
 	OverlappedEx* recvOverlapped = nullptr;
@@ -109,14 +118,14 @@ public:
 	unsigned int port = 0;
 	CLockFreeQueue<Serializer*> sendBuf;
 	CLockFreeQueue<Serializer*> contentQ;
-	CContent* content;
+	FContentHandle content;
 	Serializer* recvBuf = nullptr;
-	CLoginThread* dest = nullptr;
+	CContentManager* manager = nullptr;
+#ifdef SESSION_DEBUG
+	std::array<const char*, 100> debug;
+	long debugIndex;
+#endif
 	long assembleCnt = 0;
-	long refCnt = 0;
-	long sending = 0;
-	long invalid = 0;
-	long disconnect = 0;
 	bool encoding = false;
 	Serializer** pendingBuffer;
 	void* user;

@@ -6,6 +6,7 @@
 #include <JCore/CLockFreeStack.h>
 #include <JCore/CThread.h>
 #include <JNet/CContent.h>
+#include <JNet/CContentQueue.h>
 #include "CTimerThread.h"
 
 class CContent;
@@ -21,19 +22,21 @@ public:
 	void Start();
 	void Stop();
 
-	template <typename Lambda>
-	FTimerHandle PostAfterInternal(int tickAfter, CContent* content, Lambda&& lambda)
+	FTimerHandle PostAfterInternal(int tickAfter, CContent* content, CContentQueue::Func func)
 	{
-		FInternalTask* task = CInternalSession::CreateTask(std::forward<Lambda>(lambda));
-		FTimerNode* node = Alloc(tickAfter, content, task);
+		FTimerNode* node = Alloc(tickAfter, content, func);
 		if (node == nullptr)
 		{
-			FTimerHandle handle; 
-			handle.handle = FTimerHandle::INVALID_HANDLE;
-			return handle;
+			return FTimerHandle(FTimerHandle::INVALID_HANDLE);
 		}
+
 		int threadIdx = node->handle.id % _timerThreads.size();
-		_timerThreads[threadIdx]->Enqueue(node);
+		if (!_timerThreads[threadIdx]->Enqueue(node))
+		{
+			Free(node);
+			return FTimerHandle(FTimerHandle::INVALID_HANDLE);
+		}
+
 		return node->handle;
 	}
 
@@ -41,7 +44,7 @@ public:
 
 	bool IsValid(FTimerHandle handle);
 
-	FTimerNode* Alloc(int tickAfter, CContent* content, FInternalTask* task)
+	FTimerNode* Alloc(int tickAfter, CContent* content, CContentQueue::Func task)
 	{
 		int idx;
 		long id = InterlockedIncrement(&_nextId);

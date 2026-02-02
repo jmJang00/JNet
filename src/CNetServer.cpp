@@ -29,19 +29,19 @@ CNetServer::CNetServer(int concurrentThreadCnt, int totalThreadCnt, int maxSessi
 	_worker = new CWorkerThread(totalThreadCnt, concurrentThreadCnt);
 	_worker->Start();
 
-	_maxSession = maxSession;
-	_sessions.resize(maxSession);
-	for (int i = 0; i < maxSession; ++i)
+	_maxSession = std::min(655335, maxSession);
+	_sessions.resize(_maxSession);
+	for (int i = 0; i < _maxSession; ++i)
 	{
 		_sessions[i] = new Session();
 	}
 
-	for (int i = maxSession - 1; i >= 0; --i)
+	for (int i = _maxSession - 1; i >= 0; --i)
 	{
 		_sessionIndexStack.push(i);
 	}
 
-	_serverContext = new CInternalSession(_worker, this, 3000);
+	_serverContext = new CInternalSession(_worker, 3000);
 
 	_serverMetrics = new ServerMetrics();
 }
@@ -135,7 +135,7 @@ bool CNetServer::Start(const char* ip, const char* port, bool nagle = true,
 		setsockopt(_listenSock, SOL_SOCKET, SO_LINGER, (char*)&linger, sizeof(linger));
 		SLOGA(JNetLog::Progress, L"setsockopt SO_LINGER = (%d, %d)\n", linger.l_linger, linger.l_onoff);
 
-		retval = listen(_listenSock, SOMAXCONN);
+		retval = listen(_listenSock, SOMAXCONN_HINT(_maxSession));
 		if (retval == SOCKET_ERROR)
 		{
 			ELOGA(JNetLog::Progress, L"listen failed, [ErrorCode]:%d", GetLastError());
@@ -190,8 +190,6 @@ void CNetServer::Stop()
 		Sleep(10);
 	}
 
-	RefreshStatistics();
-
 	if (_acceptor != nullptr)
 	{
 		delete _acceptor;
@@ -203,6 +201,11 @@ void CNetServer::Stop()
 
 bool CNetServer::Disconnect(SessionId sessionId)
 {
+	if (sessionId.internal.idx >= (unsigned int)_maxSession)
+	{
+		return false;
+	}
+
 	Session* session = _sessions[sessionId.internal.idx];
 	if (!session->AddRef())
 	{
@@ -216,8 +219,13 @@ bool CNetServer::Disconnect(SessionId sessionId)
 		return false;
 	}
 
+#ifdef SESSION_DEBUG
+	session->debug[(InterlockedIncrement(&session->debugIndex)) % 100] = "Disconnect";
+#endif
+
 	InterlockedExchange(&session->invalid, 1);
-	InterlockedIncrement(&_disconnectTotal);
+	long disconnectNum = InterlockedIncrement(&_disconnectTotal);
+	DLOGA(JNetLog::Network, L"session disconnected %016llX", session->id.total);
 	CancelIoEx((HANDLE)session->sock, (OVERLAPPED*)session->recvOverlapped);
 	CancelIoEx((HANDLE)session->sock, (OVERLAPPED*)session->sendOverlapped);
 
@@ -227,7 +235,11 @@ bool CNetServer::Disconnect(SessionId sessionId)
 
 bool CNetServer::SendPacket(SessionId sessionId, Serializer* message)
 {
-	PROFILER(L"SendPacket");
+	if (sessionId.internal.idx >= (unsigned int)_maxSession)
+	{
+		return false;
+	}
+
 	Session* session = _sessions[sessionId.internal.idx];
 
 	if (!session->AddRef())
@@ -257,7 +269,7 @@ bool CNetServer::SendPacket(SessionId sessionId, Serializer* message)
 		return false;
 	}
 
-	if (InterlockedExchange(&session->sending, 1) == 0)
+	if (InterlockedExchange(&session->sendRequest, 1) == 0)
 	{
 		PostQueuedCompletionStatus(_worker->_hIOCP, 0, (ULONG_PTR)session, (LPOVERLAPPED)CWorkerThread::SEND_START);
 	}
@@ -315,11 +327,6 @@ CInternalSession* CNetServer::GetServerContext()
 	return _serverContext;
 }
 
-void CNetServer::HandleInternalMessage(CInternalSession* session)
-{
-	session->Execute();
-}
-
 Session* CNetServer::CreateSession(SOCKET sock)
 {
 	if (_sessionCnt >= _maxSession)
@@ -355,8 +362,7 @@ Session* CNetServer::CreateSession(SOCKET sock)
 			return nullptr;
 		}
 
-		session->Start(sock, _worker->_hIOCP, this, sessionId, _encoding);
-
+		session->Start(sock, _worker->_hIOCP, this, nullptr, sessionId, _encoding);
 		InterlockedIncrement(&_sessionCnt);
 
 		return session;
@@ -368,8 +374,9 @@ Session* CNetServer::CreateSession(SOCKET sock)
 bool CNetServer::ReleaseSession(Session* session)
 {
 	SessionId id = session->id;
+	void* userData = session->user;
 	session->Reset();
-	OnRelease(id, session->user);
+	OnRelease(id, userData);
 	_sessionIndexStack.push(id.internal.idx);
 	InterlockedDecrement(&_sessionCnt);
 
@@ -404,14 +411,28 @@ void CNetServer::AcceptThread()
 		}
 
 		InterlockedIncrement(&_acceptCnt);
-		OnAccept(session->id, session->ip, session->port, session->user);
+		void* userData = nullptr;
+		OnAccept(session->id, session->ip, session->port, userData);
+		session->user = userData;
 
 		if ((session->refCnt & 0x80000000) == 0)
 		{
 			CRASH(true);
 		}
 
-		if (!session->RecvPost())
+#ifdef SESSION_DEBUG
+		session->debug[(InterlockedIncrement(&session->debugIndex)) % 100] = "First Recv Post";
+#endif
+
+		if (session->RecvPost())
+		{
+			if (session->invalid == 1)
+			{
+				CancelIoEx((HANDLE)session->sock,
+					(OVERLAPPED*)session->recvOverlapped);
+			}
+		}
+		else
 		{
 			session->ReleasePost();
 		}
