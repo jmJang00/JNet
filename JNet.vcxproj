@@ -70,6 +70,12 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <OutDir>$(ProjectDir)..\$(Platform)\$(Configuration)\</OutDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>$(ProjectDir)..\$(Platform)\$(Configuration)\</OutDir>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -140,23 +146,26 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="include\JNet\CInternalSession.h" />
+    <ClInclude Include="include\JNet\CLambdaPipe.h" />
     <ClInclude Include="include\JNet\CContentQueue.h" />
     <ClInclude Include="include\JNet\CNetClient.h" />
     <ClInclude Include="include\JNet\CNetServer.h" />
     <ClInclude Include="include\JNet\CMonitorThread.h" />
     <ClInclude Include="include\JNet\CObjectRingBuffer.h" />
+    <ClInclude Include="include\JNet\CPacketView.h" />
+    <ClInclude Include="include\JNet\CStreamReader.h" />
+    <ClInclude Include="include\JNet\CStreamWriter.h" />
     <ClInclude Include="include\JNet\CWorkerThread.h" />
     <ClInclude Include="include\JNet\FContentHandle.h" />
     <ClInclude Include="include\JNet\INetworkEntity.h" />
     <ClInclude Include="include\JNet\Initialize.h" />
     <ClInclude Include="include\JNet\PacketHeader.h" />
-    <ClInclude Include="include\JNet\PacketBuffer.h" />
-    <ClInclude Include="include\JNet\Serializer.h" />
-    <ClInclude Include="include\JNet\Session.h" />
-    <ClInclude Include="include\JNet\SystemMessage.h" />
+    <ClInclude Include="include\JNet\CPacketBuffer.h" />
+    <ClInclude Include="include\JNet\CPacket.h" />
+    <ClInclude Include="include\JNet\CSession.h" />
+    <ClInclude Include="include\JNet\FSystemMessage.h" />
     <ClInclude Include="include\JNet\Types.h" />
-    <ClInclude Include="pch.h" />
+    <ClInclude Include="src\pch.h" />
     <ClInclude Include="include\JNet\CContent.h" />
     <ClInclude Include="include\JNet\CAppServer.h" />
     <ClInclude Include="include\JNet\CContentManager.h" />
@@ -168,16 +177,17 @@
     <ClCompile Include="src\CAppServer.cpp" />
     <ClCompile Include="src\CContent.cpp" />
     <ClCompile Include="src\CContentManager.cpp" />
-    <ClCompile Include="src\CInternalSession.cpp" />
+    <ClCompile Include="src\CLambdaPipe.cpp" />
     <ClCompile Include="src\CNetClient.cpp" />
     <ClCompile Include="src\CNetServer.cpp" />
     <ClCompile Include="src\CMonitorThread.cpp" />
+    <ClCompile Include="src\CPacketView.cpp" />
     <ClCompile Include="src\CTimerManager.cpp" />
     <ClCompile Include="src\CTimerThread.cpp" />
     <ClCompile Include="src\CWorkerThread.cpp" />
     <ClCompile Include="src\Initialize.cpp" />
     <ClCompile Include="src\LogTag.cpp" />
-    <ClCompile Include="src\PacketBuffer.cpp" />
+    <ClCompile Include="src\CPacketBuffer.cpp" />
     <ClCompile Include="src\PacketHeader.cpp" />
     <ClCompile Include="src\pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -185,13 +195,8 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\Serializer.cpp" />
-    <ClCompile Include="src\Session.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\JCore\JCore.vcxproj">
-      <Project>{77781332-086b-4a79-9b53-7c7570923dd9}</Project>
-    </ProjectReference>
+    <ClCompile Include="src\CPacket.cpp" />
+    <ClCompile Include="src\CSession.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

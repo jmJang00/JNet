@@ -1,6 +1,6 @@
 #pragma once
 #include <vector>
-#include <JNet/Session.h>
+#include <JNet/CSession.h>
 #include <JNet/FContentHandle.h>
 #include <JCore/CLockFreeStack.h>
 #include <JNet/CContent.h>
@@ -68,7 +68,7 @@ public:
 		return true;
 	}
 
-	bool MoveTo(SessionId id, FContentHandle to);
+	bool MoveTo(FSessionId id, FContentHandle to);
 	CAppServer* _server;
 
 public:

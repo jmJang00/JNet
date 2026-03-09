@@ -9,5 +9,6 @@
 
 // add headers that you want to pre-compile here
 #include <JCore/JWindows.h>
+#pragma comment(lib, "JCore.lib")
 
 #endif //PCH_H

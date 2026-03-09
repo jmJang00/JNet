@@ -6,9 +6,9 @@
 #include <JCore/CTlsMemoryPool.h>
 #include <JNet/CNetServer.h>
 #include <JNet/CNetClient.h>
-#include <JNet/Session.h>
-#include <JNet/Serializer.h>
-#include <JNet/CInternalSession.h>
+#include <JNet/CSession.h>
+#include <JNet/CPacket.h>
+#include <JNet/CLambdaPipe.h>
 #include <JNet/CMonitorThread.h>
 #include <JNet/CContent.h>
 #include "LogTag.h"
@@ -27,21 +27,16 @@ CNetServer::CNetServer(int concurrentThreadCnt, int totalThreadCnt, int maxSessi
 	, _sessionIndexStack(maxSession)
 {
 	_worker = new CWorkerThread(totalThreadCnt, concurrentThreadCnt);
-	_worker->Start();
 
 	_maxSession = std::min(655335, maxSession);
 	_sessions.resize(_maxSession);
-	for (int i = 0; i < _maxSession; ++i)
-	{
-		_sessions[i] = new Session();
-	}
 
 	for (int i = _maxSession - 1; i >= 0; --i)
 	{
 		_sessionIndexStack.push(i);
 	}
 
-	_serverContext = new CInternalSession(_worker, 3000);
+	_serverContext = new CLambdaPipe(_worker, 3000);
 
 	_serverMetrics = new ServerMetrics();
 }
@@ -58,10 +53,7 @@ CNetServer::~CNetServer()
 		_worker = nullptr;
 	}
 
-	for (int i = 0; i < _maxSession; ++i)
-	{
-		delete _sessions[i];
-	}
+	_sessions.clear();
 
 	while (_sessionIndexStack.size() > 0)
 	{
@@ -145,8 +137,7 @@ bool CNetServer::Start(const char* ip, const char* port, bool nagle = true,
 		_encoding = encoding;
 		InterlockedExchange8(&_isRunning, 1);
 
-		_serverContext->Resume();
-		_worker->Start();
+		_worker->Start(_workerObservers);
 		_acceptor->Resume();
 		return true;
 
@@ -163,7 +154,7 @@ void CNetServer::Stop()
 
 	InterlockedExchange8(&_isRunning, 0);
 
-	_serverContext->Suspend();
+	_serverContext->ClearPendingTasks();
 
 	if (_listenSock != INVALID_SOCKET)
 	{
@@ -179,9 +170,9 @@ void CNetServer::Stop()
 
 	for (int i = 0; i < _maxSession; ++i)
 	{
-		if (_sessions[i]->refCnt & 0x80000000)
+		if (_sessions[i]._refCnt & 0x80000000)
 		{
-			Disconnect(_sessions[i]->id);
+			Disconnect(_sessions[i]._id);
 		}
 	}
 
@@ -199,21 +190,21 @@ void CNetServer::Stop()
 	_encoding = false;
 }
 
-bool CNetServer::Disconnect(SessionId sessionId)
+bool CNetServer::Disconnect(FSessionId sessionId)
 {
 	if (sessionId.internal.idx >= (unsigned int)_maxSession)
 	{
 		return false;
 	}
 
-	Session* session = _sessions[sessionId.internal.idx];
+	CSession* session = &_sessions[sessionId.internal.idx];
 	if (!session->AddRef())
 	{
 		session->ReleasePost();
 		return false;
 	}
 
-	if (session->id.total != sessionId.total || InterlockedExchange(&session->disconnect, 1) == 1)
+	if (session->_id.total != sessionId.total || InterlockedExchange8(&session->_disconnect, 1) == 1)
 	{
 		session->ReleasePost();
 		return false;
@@ -223,24 +214,24 @@ bool CNetServer::Disconnect(SessionId sessionId)
 	session->debug[(InterlockedIncrement(&session->debugIndex)) % 100] = "Disconnect";
 #endif
 
-	InterlockedExchange(&session->invalid, 1);
+	InterlockedExchange8(&session->_invalid, 1);
 	long disconnectNum = InterlockedIncrement(&_disconnectTotal);
-	DLOGA(JNetLog::Network, L"session disconnected %016llX", session->id.total);
-	CancelIoEx((HANDLE)session->sock, (OVERLAPPED*)session->recvOverlapped);
-	CancelIoEx((HANDLE)session->sock, (OVERLAPPED*)session->sendOverlapped);
+	DLOGA(JNetLog::Network, L"session disconnected %016llX", session->_id.total);
+	CancelIoEx((HANDLE)session->_sock, (OVERLAPPED*)session->_recvOverlapped);
+	CancelIoEx((HANDLE)session->_sock, (OVERLAPPED*)session->_sendOverlapped);
 
 	session->ReleasePost();
 	return true;
 }
 
-bool CNetServer::SendPacket(SessionId sessionId, Serializer* message)
+bool CNetServer::SendPacket(FSessionId sessionId, CPacketBuffer* message)
 {
 	if (sessionId.internal.idx >= (unsigned int)_maxSession)
 	{
 		return false;
 	}
 
-	Session* session = _sessions[sessionId.internal.idx];
+	CSession* session = &_sessions[sessionId.internal.idx];
 
 	if (!session->AddRef())
 	{
@@ -248,28 +239,24 @@ bool CNetServer::SendPacket(SessionId sessionId, Serializer* message)
 		return false;
 	}
 
-	if (session->id.total != sessionId.total || session->invalid == 1)
+	if (session->_id.total != sessionId.total || session->_invalid == 1)
 	{
 		session->ReleasePost();
 		return false;
 	}
 
-	Serializer* newMessage = Serializer::Alloc(message);
-	if (!newMessage->HasHeader())
-	{
-		newMessage->MakeHeader(_encoding);
-	}
+	message->AddRef();
 
-	if (!session->sendBuf.Enqueue(newMessage))
+	if (!session->_sendBuf->Enqueue(message))
 	{
-		OnError(NetError::SEND_BUFFER_LIMIT_REACHED, "SendPacket(): Packet count exceeds send buffer limit");
+		OnError(ENetError::SEND_BUFFER_LIMIT_REACHED, "SendPacket(): Packet count exceeds send buffer limit");
 		session->ReleasePost();
-		Serializer::Free(newMessage);
+		message->Release();
 		Disconnect(sessionId);
 		return false;
 	}
 
-	if (InterlockedExchange(&session->sendRequest, 1) == 0)
+	if (InterlockedExchange8(&session->_sending, 1) == 0)
 	{
 		PostQueuedCompletionStatus(_worker->_hIOCP, 0, (ULONG_PTR)session, (LPOVERLAPPED)CWorkerThread::SEND_START);
 	}
@@ -281,7 +268,31 @@ bool CNetServer::SendPacket(SessionId sessionId, Serializer* message)
 	return true;
 }
 
-bool CNetServer::SendPacketMultiCast(SessionId* group, int count, Serializer* message)
+bool CNetServer::SendPacketUnsafe(FSessionId sessionId, CPacketBuffer* message)
+{
+	CSession* session = &_sessions[sessionId.internal.idx];
+
+	message->AddRef();
+
+	if (!session->_sendBuf->Enqueue(message))
+	{
+		OnError(ENetError::SEND_BUFFER_LIMIT_REACHED, "SendPacket(): Packet count exceeds send buffer limit");
+		session->ReleasePost();
+		message->Release();
+		Disconnect(sessionId);
+		return false;
+	}
+
+	if (InterlockedExchange8(&session->_sending, 1) == 0)
+	{
+		session->AddRef();
+		PostQueuedCompletionStatus(_worker->_hIOCP, 0, (ULONG_PTR)session, (LPOVERLAPPED)CWorkerThread::SEND_START);
+	}
+
+	return true;
+}
+
+bool CNetServer::SendPacketMultiCast(FSessionId* group, int count, CPacketBuffer* message)
 {
 	bool success = true;
 	for (int i = 0; i < count; i++)
@@ -291,21 +302,7 @@ bool CNetServer::SendPacketMultiCast(SessionId* group, int count, Serializer* me
 	return success;
 }
 
-void CNetServer::OnPrintExternal(wchar_t** wstr, size_t* remaining)
-{
-	ServerMetrics* metrics = _serverMetrics;
-	APPEND_FORMAT(*wstr, *remaining, L"-----------------------------------------------------------------------------------------------\n");
-	APPEND_FORMAT(*wstr, *remaining, L" %-21s | %-21s | %-21s | %-21s\n",
-		L"[Accpet Total]", L"[Recv Bytes]", L"[Send Bytes]", L"[Session]");
-	APPEND_FORMAT(*wstr, *remaining, L" %-21d | %-17.3lfKB/s | %-17.3lfKB/s | %-21d\n",
-		metrics->acceptTotal, (double)metrics->recvBytes / 1000, (double)metrics->sendBytes / 1000, metrics->sessionCnt);
-	APPEND_FORMAT(*wstr, *remaining, L" %-21s | %-21s | %-21s | %-21s\n",
-		L"[Accept TPS]", L"[Recv TPS]", L"[Send TPS]", L"[Disconnected]");
-	APPEND_FORMAT(*wstr, *remaining, L" %-19d/s | %-19d/s | %-19d/s | %-21d\n",
-		metrics->acceptTPS, metrics->recvMessageTPS, metrics->sendMessageTPS, metrics->disconnectCnt);
-}
-
-void CNetServer::OnError(NetError errCode, const char* errMsg)
+void CNetServer::OnError(ENetError errCode, const char* errMsg)
 {
 	DLOGA(JNetLog::Network, L"%S\n", errMsg);
 }
@@ -320,14 +317,43 @@ void CNetServer::OnCollectExternal(MetricsCollector& collector)
 	_serverMetrics->recvMessageTPS = GetRecvMessageTPS();
 	_serverMetrics->sendMessageTPS = GetSendMessageTPS();
 	_serverMetrics->sessionCnt = GetSessionCount();
+
+	_worker->OnCollectExternal(collector);
 }
 
-CInternalSession* CNetServer::GetServerContext()
+void CNetServer::OnPrintExternal(CMonitorTable* table)
+{
+	ServerMetrics* metrics = _serverMetrics;
+	table->PrintColumnStr(2, L"[Accpet Total]");
+	table->PrintColumnStr(2, L"[Recv Bytes]");
+	table->PrintColumnStr(2, L"[Send Bytes]");
+	table->PrintColumnStr(2, L"[Session]");
+
+	table->PrintColumnFormat(2, L" %d", metrics->acceptTotal);
+	table->PrintColumnFormat(2, L"%.3lfKB/s", (double)metrics->recvBytes / 1000);
+	table->PrintColumnFormat(2, L"%.3lfKB/s", (double)metrics->sendBytes / 1000);
+	table->PrintColumnFormat(2, L"%d", metrics->sessionCnt);
+
+	table->PrintColumnStr(2, L"[Accpet Tps]");
+	table->PrintColumnStr(2, L"[Recv Tps]");
+	table->PrintColumnStr(2, L"[Send Tps]");
+	table->PrintColumnStr(2, L"[Disconnected]");
+
+	table->PrintColumnFormat(2, L"%d/s", metrics->acceptTPS);
+	table->PrintColumnFormat(2, L"%d/s", metrics->recvMessageTPS);
+	table->PrintColumnFormat(2, L"%d/s", metrics->sendMessageTPS);
+	table->PrintColumnFormat(2, L"%d", metrics->disconnectCnt);
+
+	table->PrintDivider();
+	_worker->OnPrintExternal(table);
+}
+
+CLambdaPipe* CNetServer::GetServerContext()
 {
 	return _serverContext;
 }
 
-Session* CNetServer::CreateSession(SOCKET sock)
+CSession* CNetServer::CreateSession(SOCKET sock)
 {
 	if (_sessionCnt >= _maxSession)
 	{
@@ -350,11 +376,11 @@ Session* CNetServer::CreateSession(SOCKET sock)
 			return nullptr;
 		}
 
-		SessionId sessionId;
+		FSessionId sessionId;
 		sessionId.internal.id = _nextId++;
 		sessionId.internal.idx = idx;
 
-		Session* session = _sessions[sessionId.internal.idx];
+		CSession* session = &_sessions[sessionId.internal.idx];
 
 		if (!_worker->Register(session, sock))
 		{
@@ -362,7 +388,7 @@ Session* CNetServer::CreateSession(SOCKET sock)
 			return nullptr;
 		}
 
-		session->Start(sock, _worker->_hIOCP, this, nullptr, sessionId, _encoding);
+		session->Start(sock, _worker, this, nullptr, sessionId, _encoding);
 		InterlockedIncrement(&_sessionCnt);
 
 		return session;
@@ -371,10 +397,10 @@ Session* CNetServer::CreateSession(SOCKET sock)
 	return nullptr;
 }
 
-bool CNetServer::ReleaseSession(Session* session)
+bool CNetServer::ReleaseSession(CSession* session)
 {
-	SessionId id = session->id;
-	void* userData = session->user;
+	FSessionId id = session->_id;
+	void* userData = session->_userData;
 	session->Reset();
 	OnRelease(id, userData);
 	_sessionIndexStack.push(id.internal.idx);
@@ -386,7 +412,6 @@ bool CNetServer::ReleaseSession(Session* session)
 void CNetServer::AcceptThread()
 {
 	SLOGA(JNetLog::Progress, L"Accept Thread Start\n");
-	srand(GetCurrentThreadId());
 
 	while (1)
 	{
@@ -403,7 +428,7 @@ void CNetServer::AcceptThread()
 			break;
 		}
 
-		Session* session = CreateSession(clientSock);
+		CSession* session = CreateSession(clientSock);
 		if (session == nullptr)
 		{
 			closesocket(clientSock);
@@ -411,11 +436,9 @@ void CNetServer::AcceptThread()
 		}
 
 		InterlockedIncrement(&_acceptCnt);
-		void* userData = nullptr;
-		OnAccept(session->id, session->ip, session->port, userData);
-		session->user = userData;
+		OnAccept(session->_id, session->_address->ip, session->_address->port, session->_userData);
 
-		if ((session->refCnt & 0x80000000) == 0)
+		if ((session->_refCnt & 0x80000000) == 0)
 		{
 			CRASH(true);
 		}
@@ -426,10 +449,10 @@ void CNetServer::AcceptThread()
 
 		if (session->RecvPost())
 		{
-			if (session->invalid == 1)
+			if (session->_invalid == 1)
 			{
-				CancelIoEx((HANDLE)session->sock,
-					(OVERLAPPED*)session->recvOverlapped);
+				CancelIoEx((HANDLE)session->_sock,
+					(OVERLAPPED*)session->_recvOverlapped);
 			}
 		}
 		else

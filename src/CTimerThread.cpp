@@ -1,7 +1,6 @@
 #include "pch.h"
 #include <JNet/CContent.h>
 #include <JNet/CTimerThread.h>
-#include <JNet/SystemMessage.h>
 #include <JNet/CTimerManager.h>
 #include <JNet/CAppServer.h>
 #include <JNet/CContentQueue.h>

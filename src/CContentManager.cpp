@@ -3,7 +3,7 @@
 #include <JNet/CContentManager.h>
 #include <JNet/CAppServer.h>
 #include <JNet/CTimerManager.h>
-#include <JNet/Serializer.h>
+#include <JNet/CPacket.h>
 
 CContentManager::CContentManager(CAppServer* server, int maxContentCnt)
 	: _server(server)
@@ -51,6 +51,7 @@ bool CContentManager::Unregister(FContentHandle handle)
 		return false;
 	}
 
+	// 플래그를 바꾸면 콘텐츠 내부에서 플래그 확인 후 종료 절차에 들어감
 	CContent* content = node->content;
 	if (InterlockedCompareExchange(&content->_registered, 
 		CContent::Closing, CContent::Running) != CContent::Running)
@@ -59,11 +60,14 @@ bool CContentManager::Unregister(FContentHandle handle)
 		return false;
 	}
 
-	// 컨텐츠의 registered 플래그를 바꿨으므로 참조를 풀어도 된다
-	FreeContent(node);
+	// 컨텐츠의 registered 플래그를 바꾸기 위한 Execute를 풀어놓음
 	FreeContent(node);
 
-	// refCnt가 0으로 떨어졌음이 보장됨
+	// 마지막 종료 신호 
+	// 카운트가 0으로 떨어지면 컨텐츠 리셋 함수가 호출됨
+	FreeContent(node);
+
+	// 리셋 함수가 호출 완료됨
 	content->WaitStopEvent();
 
 	Free(node);
@@ -74,9 +78,9 @@ bool CContentManager::Unregister(FContentHandle handle)
 	return true;
 }
 
-bool CContentManager::MoveTo(SessionId id, FContentHandle to)
+bool CContentManager::MoveTo(FSessionId id, FContentHandle to)
 {
-	Session* session = _server->GetSession(id);
+	CSession* session = _server->GetSession(id);
 	if (session == nullptr)
 	{
 		return false;
@@ -116,12 +120,12 @@ bool CContentManager::MoveTo(SessionId id, FContentHandle to)
 	if (!success)
 	{
 		_server->FreeSession(session);
-		_server->Disconnect(session->id);
+		_server->Disconnect(session->_id);
 		return false;
 	}
 
 	FContentHandle prevContent(0);
-	prevContent.handle = (unsigned long long)InterlockedExchange((uintptr_t*)&session->content.handle, (uintptr_t)to.handle);
+	prevContent.handle = (unsigned long long)InterlockedExchange((uintptr_t*)&session->_content.handle, (uintptr_t)to.handle);
 	if (prevContent.handle != FContentHandle::NONE)
 	{
 		// Leave에서 FreeContent를 해주면서 카운트를 내림

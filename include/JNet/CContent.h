@@ -1,18 +1,19 @@
 #pragma once
-#include <unordered_map>
+#include <unordered_set>
 #include <array>
 #include <utility>
-#include <JNet/Session.h>
-#include <JNet/CContentQueue.h>
 #include <JCore/CLockFreeQueue.h>
 #include <JCore/ScopedLock.h>
 #include <JNet/CAppServer.h>
 #include <JNet/CTimerThread.h>
 #include <JNet/CTimerManager.h>
-#include <JNet/SystemMessage.h>
-#include <JNet/CInternalSession.h>
+#include <JNet/FSystemMessage.h>
+#include <JNet/CLambdaPipe.h>
+#include <JNet/CSession.h>
+#include <JNet/CContentQueue.h>
 
-class CInternalSession;
+class CPacketView;
+class CLambdaPipe;
 class CWorkerThread;
 class CAppServer;
 class CContentManager;
@@ -37,9 +38,12 @@ public:
 	virtual void OnRegister() = 0;
 	virtual void OnUnregister() = 0;
 	virtual void OnTick(int deltaTime) = 0;
-	virtual void OnRecv(SessionId sessionId, Serializer* packet) = 0;
-	virtual void OnEnter(SessionId sessionId, void* userData) = 0;
-	virtual void OnLeave(SessionId sessionId, void*& userData) = 0;
+	virtual void OnRecv(FSessionId sessionId, CPacketView* packet) = 0;
+	virtual void OnEnter(FSessionId sessionId, void* userData) = 0;
+	virtual void OnLeave(FSessionId sessionId, void*& userData) = 0;
+
+	virtual void OnCollectExternal() = 0;
+	virtual void OnPrintExternal(wchar_t** wstr, size_t* remain) = 0;
 
 	template <typename Lambda>
 	bool RequestExternal(Lambda&& func)
@@ -49,11 +53,11 @@ public:
 			return false;
 		}
 
-		FInternalTask* task = FInternalTask::CreateTask(std::forward<Lambda>(func));
+		FLambdaTask* task = FLambdaTask::CreateTask(std::forward<Lambda>(func));
 
 		if (!_requestQ.Enqueue(task))
 		{
-			FInternalTask::ReleaseTask(task);
+			FLambdaTask::ReleaseTask(task);
 			return false;
 		}
 
@@ -77,14 +81,15 @@ protected:
 	bool Reserve(int ms, CContentQueue::Func func);
 
 private:
-	void Enter(Session* session);
-	void Leave(Session* session);
+	void Enter(CSession* session);
+	void Leave(CSession* session);
 	void Update();
 	void Start();
 	void ClearInvalidHandles();
 	void ClearRequest();
 	void ProcessRequest();
 	void ProcessUpdateQueue();
+	void DisconnectSession();
 	void ClearSession();
 	void Reset();
 
@@ -102,6 +107,7 @@ private:
 	long _timerRefCnt;
 	CLockFreeQueue<FSystemMessage> _updateQ;
 	CLockFreeQueue<FTimerHandle> _timers;
-	CLockFreeQueue<FInternalTask*> _requestQ;
-	std::unordered_map<SessionId, Session*> _sessionMap;
+	CLockFreeQueue<FLambdaTask*> _requestQ;
+	std::unordered_set<FSessionId> _sessions;
+	std::vector<FSessionId> _invalidSessions;
 };

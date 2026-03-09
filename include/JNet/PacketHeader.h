@@ -1,14 +1,14 @@
 #pragma once
 
 #pragma pack(push, 1)
-struct Header
+struct FHeader
 {
-	short size;
+	unsigned short size;
 };
 #pragma pack(pop)
 
 #pragma pack(push, 1)
-struct HeaderEx
+struct FHeaderEx
 {
 	unsigned char code;
 	unsigned short len;

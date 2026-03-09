@@ -2,13 +2,14 @@
 #include <JCore/SLog.h>
 #include <JNet/PacketHeader.h>
 #include <JNet/CWorkerThread.h>
-#include <JNet/Session.h>
-#include <JNet/Serializer.h>
+#include <JNet/CSession.h>
+#include <JNet/CPacket.h>
 #include <JNet/INetworkEntity.h>
-#include <JNet/CInternalSession.h>
+#include <JNet/CLambdaPipe.h>
 #include <JNet/CContent.h>
 #include <JNet/CContentManager.h>
 #include <JNet/CContentQueue.h>
+#include <JNet/CPacketView.h>
 #include "LogTag.h"
 
 CWorkerThread::CWorkerThread(int threadCnt, int concurrentThreadCnt)
@@ -20,6 +21,7 @@ CWorkerThread::CWorkerThread(int threadCnt, int concurrentThreadCnt)
 	, _sendMessageCnt(0)
 	, _threadCnt(threadCnt)
 	, _chatResCnt(0)
+	, _prevTime(0)
 {
 	_hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, concurrentThreadCnt);
 	if (_hIOCP == NULL)
@@ -35,16 +37,18 @@ CWorkerThread::CWorkerThread(int threadCnt, int concurrentThreadCnt)
 	}
 
 	_isRunning.store(false);
+	_workerMetrics.resize(threadCnt);
 }
 
 CWorkerThread::~CWorkerThread()
 {
 	CloseHandle(_hIOCP);
-	_hIOCP = NULL;
+	_workerMetrics.clear();
 }
 
-void CWorkerThread::Start()
+void CWorkerThread::Start(const std::vector<IWorkerObserver*>& observers)
 { 
+	_workerObservers = observers;
 	Resume();
 	_isRunning.store(true);
 }
@@ -55,6 +59,7 @@ void CWorkerThread::Stop()
 	Shutdown();
 	Wait();
 	Close();
+	_workerObservers.clear();
 }
 
 void CWorkerThread::Shutdown()
@@ -67,7 +72,7 @@ bool CWorkerThread::PostStatus(uintptr_t compKey, OVERLAPPED* ov, unsigned int t
 	return PostQueuedCompletionStatus(_hIOCP, transferred, compKey, ov);
 }
 
-bool CWorkerThread::Register(Session* session, SOCKET sock)
+bool CWorkerThread::Register(CSession* session, SOCKET sock)
 {
 	if (CreateIoCompletionPort((HANDLE)sock, _hIOCP, (ULONG_PTR)session, 0) == NULL)
 	{
@@ -75,27 +80,28 @@ bool CWorkerThread::Register(Session* session, SOCKET sock)
 		return false;
 	}
 
-	session->sock = sock;
+	session->_sock = sock;
 	return true;
 }
 
-void CWorkerThread::RecvProcDecoding(Session* session)
+void CWorkerThread::RecvProcDecoding(CSession* session)
 {
 	int dataSize = 0;
 	int freeSize = 0;
 	int needSize = 0;
-	INetworkEntity* owner = session->owner;
+	INetworkEntity* owner = session->_owner;
 	while (1)
 	{
-		dataSize = session->recvBuf->GetDataSize();
-		if (++session->assembleCnt > 5)
+#pragma region 헤더를 읽고 모든 데이터를 수신했는지 확인
+		dataSize = session->_recvBuf->GetDataSize();
+		if (++session->_assembleCnt > ASSEMBLE_LIMIT)
 		{
-			owner->OnError(NetError::INVALID_PACKET_HEADER, "RecvProc(): assemble limit exceeds");
-			owner->Disconnect(session->id);
+			owner->OnError(ENetError::INVALID_PACKET_HEADER, "RecvProc(): assemble limit exceeds");
+			owner->Disconnect(session->_id);
 			return;
 		}
 
-		HeaderEx header;
+		FHeaderEx header;
 
 		if (dataSize < sizeof(header))
 		{
@@ -103,12 +109,12 @@ void CWorkerThread::RecvProcDecoding(Session* session)
 			break;
 		}
 
-		memcpy((char*)&header, session->recvBuf->GetDataPtr(), sizeof(header));
+		memcpy((char*)&header, session->_recvBuf->GetDataPtr(), sizeof(header));
 
 		if (header.code != PacketHeader::SERVER_CODE)
 		{
-			owner->OnError(NetError::INVALID_PACKET_HEADER, "RecvProc(): Invalid sever code in packet header");
-			owner->Disconnect(session->id);
+			owner->OnError(ENetError::INVALID_PACKET_HEADER, "RecvProc(): Invalid sever code in packet header");
+			owner->Disconnect(session->_id);
 			return;
 		}
 
@@ -117,79 +123,86 @@ void CWorkerThread::RecvProcDecoding(Session* session)
 			needSize = header.len + sizeof(header);
 			break;
 		}
+#pragma endregion
 
-		int readPos = session->recvBuf->GetReadPos();
-		Serializer* msg = Serializer::Alloc(session->recvBuf->GetPacketBuffer(), readPos, readPos + sizeof(header) + header.len);
-		if (!msg->Decode(header.rkey))
+#pragma region 데이터 디코딩
+		int readPos = session->_recvBuf->GetReadPos();
+		CPacketView msg(session->_recvBuf, readPos, readPos + sizeof(header) + header.len);
+		if (!msg.Decode(header.rkey))
 		{
-			owner->OnError(NetError::PAKCET_CHECKSUM_MISMATCH, "RecvProc(): checksum mimatch in packet header");
-			owner->Disconnect(session->id);
+			owner->OnError(ENetError::PAKCET_CHECKSUM_MISMATCH, "RecvProc(): checksum mimatch in packet header");
+			owner->Disconnect(session->_id);
 			return;
 		}
+		msg.MoveReadPos(sizeof(header));
+#pragma endregion
 
 		InterlockedIncrement(&_recvMessageCnt);
-		msg->MoveReadPos(sizeof(header));
 		FContentHandle content(0);
-		content = (FContentHandle)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
+		content = (FContentHandle)InterlockedOr((uintptr_t*)&session->_content, (uintptr_t)0);
 		if (content == FContentHandle::NONE)
 		{
-			if (session->contentQ.GetSize() > 0)
+			if (session->_contentQ->GetUseSize() > 0)
 			{
-				owner->OnError(NetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
-				owner->Disconnect(session->id);
+				owner->OnError(ENetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
+				owner->Disconnect(session->_id);
 				return;
 			}
 			else
 			{
-				owner->OnRecv(session->id, msg);
+				owner->OnRecv(session->_id, &msg);
 			}
 		}
 		else
 		{
-			session->contentQ.Enqueue(msg);
+			unsigned short len = header.len;
+			session->_contentQ->Enqueue((char*)&len, sizeof(len));
+			session->_contentQ->Enqueue((char*)msg.GetBufferPtr(), header.len);
 		}
-		session->assembleCnt = 0;
-		session->recvBuf->MoveReadPos(sizeof(header) + header.len);
+		session->_assembleCnt = 0;
+		session->_recvBuf->MoveReadPos(sizeof(header) + header.len);
 	}
 
 	CRASH(needSize < dataSize);
 
-	if (session->recvBuf->GetFreeSize() < needSize - dataSize)
+	if (session->_recvBuf->GetFreeSize() < needSize - dataSize)
 	{
-		if (needSize > session->recvBuf->GetBufferSize())
+		if (needSize > session->_recvBuf->GetBufferSize())
 		{
-			owner->OnError(NetError::PACKET_SIZE_LIMIT_EXCEEDED, "RecvProc(): Packet size exceeds recv buffer limit");
-			owner->Disconnect(session->id);
+			owner->OnError(ENetError::PACKET_SIZE_LIMIT_EXCEEDED, "RecvProc(): Packet size exceeds recv buffer limit");
+			owner->Disconnect(session->_id);
 			return;
 		}
 		else
 		{
-			Serializer* newBuffer = Serializer::Alloc(PacketBuffer::Alloc());
-			newBuffer->PutData(session->recvBuf->GetDataPtr(), dataSize);
-			Serializer::Free(session->recvBuf);
-			session->recvBuf = newBuffer;
+			CPacketBuffer* newBuffer = CPacketBuffer::Alloc();
+			newBuffer->AddRef();
+			memcpy(newBuffer->GetBufferPtr(), session->_recvBuf->GetDataPtr(), dataSize);
+			newBuffer->MoveWritePos(dataSize);
+			session->_recvBuf->Release();
+			session->_recvBuf = newBuffer;
 		}
 	}
 }
 
-void CWorkerThread::RecvProc(Session* session)
+void CWorkerThread::RecvProc(CSession* session)
 {
 	int dataSize = 0;
 	int freeSize = 0;
 	int needSize = 0;
-	INetworkEntity* owner = session->owner;
+	INetworkEntity* owner = session->_owner;
 
 	while (1)
 	{
-		dataSize = session->recvBuf->GetDataSize();
-		if (++session->assembleCnt > 5)
+		dataSize = session->_recvBuf->GetDataSize();
+		if (++session->_assembleCnt > ASSEMBLE_LIMIT)
 		{
-			owner->OnError(NetError::INVALID_PACKET_HEADER, "RecvProc(): assemble limit exceeds");
-			owner->Disconnect(session->id);
+			owner->OnError(ENetError::INVALID_PACKET_HEADER, "RecvProc(): assemble limit exceeds");
+			owner->Disconnect(session->_id);
 			return;
 		}
 
-		Header header;
+		FHeader header;
 
 		if (dataSize < sizeof(header))
 		{
@@ -197,7 +210,7 @@ void CWorkerThread::RecvProc(Session* session)
 			break;
 		}
 
-		memcpy((char*)&header, session->recvBuf->GetDataPtr(), sizeof(header));
+		memcpy((char*)&header, session->_recvBuf->GetDataPtr(), sizeof(header));
 
 		if (dataSize < header.size + sizeof(header))
 		{
@@ -205,64 +218,129 @@ void CWorkerThread::RecvProc(Session* session)
 			break;
 		}
 
-		session->recvBuf->MoveReadPos(sizeof(header));
-		int readPos = session->recvBuf->GetReadPos();
-		Serializer* msg = Serializer::Alloc(session->recvBuf->GetPacketBuffer(), readPos, readPos + header.size);
+		session->_recvBuf->MoveReadPos(sizeof(header));
+		int readPos = session->_recvBuf->GetReadPos();
+		CPacketView msg(session->_recvBuf, readPos, readPos + header.size);
 
 		InterlockedIncrement(&_recvMessageCnt);
 		CContent* content;
-		content = (CContent*)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
+		content = (CContent*)InterlockedOr((uintptr_t*)&session->_content, (uintptr_t)0);
 		if (content == nullptr)
 		{
-			if (session->contentQ.GetSize() > 0)
+			if (session->_contentQ->GetUseSize() > 0)
 			{
-				owner->OnError(NetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
-				owner->Disconnect(session->id);
+				owner->OnError(ENetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
+				owner->Disconnect(session->_id);
 				return;
 			}
 			else
 			{
-				owner->OnRecv(session->id, msg);
+				owner->OnRecv(session->_id, &msg);
 			}
 		}
 		else
 		{
-			session->contentQ.Enqueue(msg);
+			unsigned short len = header.size;
+			session->_contentQ->Enqueue((char*)&len, sizeof(len));
+			session->_contentQ->Enqueue((char*)msg.GetBufferPtr(), len);
 		}
-		session->assembleCnt = 0;
-		session->recvBuf->MoveReadPos(header.size);
+		session->_assembleCnt = 0;
+		session->_recvBuf->MoveReadPos(header.size);
 	}
 
-	if (session->recvBuf->GetFreeSize() < needSize - dataSize)
+	if (session->_recvBuf->GetFreeSize() < needSize - dataSize)
 	{
-		if (needSize > session->recvBuf->GetBufferSize())
+		if (needSize > session->_recvBuf->GetBufferSize())
 		{
-			owner->OnError(NetError::PACKET_SIZE_LIMIT_EXCEEDED, "RecvProc(): Packet size exceeds recv buffer limit");
-			owner->Disconnect(session->id);
+			owner->OnError(ENetError::PACKET_SIZE_LIMIT_EXCEEDED, "RecvProc(): Packet size exceeds recv buffer limit");
+			owner->Disconnect(session->_id);
 		}
 		else
 		{
-			Serializer* newBuffer = Serializer::Alloc(PacketBuffer::Alloc());
-			newBuffer->PutData(session->recvBuf->GetDataPtr(), dataSize);
-			Serializer::Free(session->recvBuf);
-			session->recvBuf = newBuffer;
+			CPacketBuffer* newBuffer = CPacketBuffer::Alloc();
+			newBuffer->AddRef();
+			memcpy(newBuffer->GetBufferPtr(), session->_recvBuf->GetDataPtr(), dataSize);
+			newBuffer->MoveWritePos(dataSize);
+			CPacketBuffer::Free(session->_recvBuf);
+			session->_recvBuf = newBuffer;
 		}
+	}
+}
+
+void CWorkerThread::SendProc(CSession* session)
+{
+	while (session->_sendBuf->GetSize() > 0 
+		&& session->_invalid == 0)
+	{
+		if (session->SendPost())
+		{
+			// 다른 스레드가 먼저 보낸 경우
+			if (session->_sending == 0)
+			{
+				continue;
+			}
+
+			// Disconnect로 세션이 유효하지 않은 상황
+			if (session->_invalid == 1)
+			{
+				CancelIoEx((HANDLE)session->_sock, 
+					(OVERLAPPED*)session->_sendOverlapped);
+				break;
+			}
+		}
+		else
+		{
+			break;
+		}
+	}
+}
+
+void CWorkerThread::OnPrintExternal(CMonitorTable* table)
+{
+	Context** ctxts = GetContextBufferPtr();
+	int size = GetContextBufferSize();
+	for (int i = 0; i < size; i++)
+	{
+		table->PrintColumnFormat(1, L"[%u]", ctxts[i]->_threadId);
+		table->PrintColumnFormat(1, L"%.2lf", _workerMetrics[i].cpuUsage);
+	}
+	table->PrintDivider();
+}
+
+void CWorkerThread::OnCollectExternal(MetricsCollector& collector)
+{
+	Context** ctxts = GetContextBufferPtr();
+	int size = GetContextBufferSize();
+	unsigned int currTime = timeGetTime();
+	unsigned int diff = currTime - _prevTime;
+	_prevTime = currTime;
+	for (int i = 0; i < size; i++)
+	{
+		_workerMetrics[i].cpuUsage = (double)ctxts[i]->GetMeasuredTime() / diff * 100;
 	}
 }
 
 void CWorkerThread::WorkerThread()
 {
 	SLOGA(JNetLog::Network, L"Worker Thread Start\n");
+	Context* ctxt = GetContextPtr();
+	for (int i = 0; i < _workerObservers.size(); i++)
+	{
+		_workerObservers[i]->OnWorkerStart();
+	}
 
 	while (1)
 	{
-		Session* session = nullptr;
+		CSession* session = nullptr;
 		INetworkEntity* owner = nullptr;
-		OverlappedEx* overlapped = nullptr;
+		FOverlappedEx* overlapped = nullptr;
 		DWORD transferred = 0;
 		ULONG_PTR compKey = 0;
 		unsigned int requested = 0;
+
+		ctxt->TimeMeasureEnd();
 		GetQueuedCompletionStatus(_hIOCP, &transferred, &compKey, (OVERLAPPED**)&overlapped, INFINITE);
+		ctxt->TimeMeasureBegin();
 
 		if (overlapped == nullptr && compKey == 0 && transferred == 0)
 		{
@@ -275,38 +353,29 @@ void CWorkerThread::WorkerThread()
 		{
 		case SEND_START:
 		{
-			session = (Session*)compKey;
-			InterlockedExchange(&session->sendRequest, 0);
+			session = (CSession*)compKey;
 
-			while (session->sendBuf.GetSize() > 0 && session->invalid == 0)
+			if (session->SendPostRaw())
 			{
-				if (session->SendPost())
+				if (session->_sending == 0)
 				{
-					if (session->sending == 0)
-					{
-						continue;
-					}
-
-					if (session->invalid == 1)
-					{
-						CancelIoEx((HANDLE)session->sock,
-							(OVERLAPPED*)session->sendOverlapped);
-						break;
-					}
+					SendProc(session);
+					continue;
 				}
-				else
+
+				if (session->_invalid == 1)
 				{
-					break;
+					CancelIoEx((HANDLE)session->_sock,
+						(OVERLAPPED*)session->_sendOverlapped);
 				}
 			}
-			session->Release();
 			continue;
 		}
 		case RELEASE_SESSION:
 		{
-			session = (Session*)compKey;
-			owner = session->owner;
-			FContentHandle content = (FContentHandle)InterlockedOr((uintptr_t*)&session->content, (uintptr_t)0);
+			session = (CSession*)compKey;
+			owner = session->_owner;
+			FContentHandle content = (FContentHandle)InterlockedOr((uintptr_t*)&session->_content, (uintptr_t)0);
 			if (content == FContentHandle::NONE)
 			{
 				owner->ReleaseSession(session);
@@ -316,7 +385,7 @@ void CWorkerThread::WorkerThread()
 				FSystemMessage msg;
 				msg.type = ESystemMessageType::MSG_RELEASE;
 				msg.session = session;
-				if (!session->manager->Execute<CContent>(CContent::Running | CContent::Closing, 
+				if (!session->_contentMng->Execute<CContent>(CContent::Running | CContent::Closing, 
 					content, &CContent::Enqueue, &msg))
 				{
 					owner->ReleaseSession(session);
@@ -326,7 +395,7 @@ void CWorkerThread::WorkerThread()
 		}
 		case POST_MESSAGE:
 		{
-			CInternalSession* internalSession = (CInternalSession*)compKey;
+			CLambdaPipe* internalSession = (CLambdaPipe*)compKey;
 			internalSession->Execute();
 			continue;
 		}
@@ -338,23 +407,23 @@ void CWorkerThread::WorkerThread()
 		}
 		default:
 		{
-			session = (Session*)compKey;
+			session = (CSession*)compKey;
 			break;
 		}
 		}
 
-		if (session->recvOverlapped == overlapped)
+		if (session->_recvOverlapped == overlapped)
 		{
 			if (transferred == 0)
 			{
-				InterlockedExchange(&session->invalid, 1);
+				InterlockedExchange8(&session->_invalid, 1);
 				session->Release();
 				continue;
 			}
 
 			InterlockedAdd(&_recvBytes, (long)transferred);
-			session->recvBuf->MoveWritePos(transferred);
-			if (session->encoding)
+			session->_recvBuf->MoveWritePos(transferred);
+			if (session->_encoding)
 			{
 				RecvProcDecoding(session);
 			}
@@ -363,7 +432,7 @@ void CWorkerThread::WorkerThread()
 				RecvProc(session);
 			}
 
-			if (session->invalid == 0)
+			if (session->_invalid == 0)
 			{
 				if (!session->AddRef())
 				{
@@ -372,10 +441,10 @@ void CWorkerThread::WorkerThread()
 
 				if (session->RecvPost())
 				{
-					if (session->invalid == 1)
+					if (session->_invalid == 1)
 					{
-						CancelIoEx((HANDLE)session->sock,
-							(OVERLAPPED*)session->recvOverlapped);
+						CancelIoEx((HANDLE)session->_sock,
+							(OVERLAPPED*)session->_recvOverlapped);
 					}
 				}
 				else
@@ -384,13 +453,13 @@ void CWorkerThread::WorkerThread()
 				}
 			}
 		}
-		else if (session->sendOverlapped == overlapped)
+		else if (session->_sendOverlapped == overlapped)
 		{
 			requested = overlapped->reqLen;
 
 			if (transferred < requested)
 			{
-				InterlockedExchange(&session->invalid, 1);
+				InterlockedExchange8(&session->_invalid, 1);
 				session->Release();
 				continue;
 			}
@@ -400,13 +469,8 @@ void CWorkerThread::WorkerThread()
 				int bufCnt = overlapped->bufCnt;
 				for (int i = 0; i < bufCnt; ++i)
 				{
-					if (session->pendingBuffer[i]->GetPacketBuffer()->_packetType == 6)
-					{
-						InterlockedIncrement(&_chatResCnt);
-					}
-
-					Serializer::Free(session->pendingBuffer[i]);
-					session->pendingBuffer[i] = nullptr;
+					session->_pendingBuffer[i]->Release();
+					session->_pendingBuffer[i] = nullptr;
 				}
 
 				InterlockedAdd(&_sendMessageCnt, bufCnt);
@@ -414,30 +478,11 @@ void CWorkerThread::WorkerThread()
 				overlapped->bufCnt = 0;
 			}
 
-			InterlockedExchange(&session->sending, 0);
+			InterlockedExchange8(&session->_sending, 0);
 
-			while (session->sendBuf.GetSize() > 0 && session->invalid == 0)
-			{
-				if (session->SendPost())
-				{
-					if (session->sending == 0)
-					{
-						continue;
-					}
-
-					if (session->invalid == 1)
-					{
-						CancelIoEx((HANDLE)session->sock,
-							(OVERLAPPED*)session->sendOverlapped);
-						break;
-					}
-				}
-				else
-				{
-					break;
-				}
-			}
+			SendProc(session);
 		}
+
 		session->Release();
 	}
 

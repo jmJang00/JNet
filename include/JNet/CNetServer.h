@@ -5,7 +5,7 @@
 #include <array>
 #include <JCore/CLockFreeStack.h>
 #include <JCore/CLockFreeQueue.h>
-#include <JNet/Session.h>
+#include <JNet/CSession.h>
 #include <JNet/INetworkEntity.h>
 #include <JNet/PacketHeader.h>
 #include <JNet/CWorkerThread.h>
@@ -35,37 +35,40 @@ struct ServerMetrics
 	int sessionCnt = 0;
 };
 
-class Session;
-class Serializer;
+class CSession;
+class CPacketBuffer;
 class CMonitorThread;
-class CInternalSession;
+class CLambdaPipe;
+class CPacketView;
+class CMonitorTable;
 
 class CNetServer : public INetworkEntity
 {
 public:
 	friend class CMonitorThread;
-	friend class Session;
+	friend class CSession;
 	CNetServer(int concurrentThreadCnt, int totalThreadCnt, int maxSession);
 	virtual ~CNetServer();
 	
 	bool Start(const char* ip, const char* port, bool nagle, bool encoding, bool sendBufZero);
 	virtual void Stop();
 
-	virtual bool Disconnect(SessionId sessionId);
-	bool SendPacket(SessionId sessionId, Serializer* message);
-	bool SendPacketMultiCast(SessionId* group, int count, Serializer* message);
+	virtual bool Disconnect(FSessionId sessionId);
+	bool SendPacket(FSessionId sessionId, CPacketBuffer* message);
+	bool SendPacketUnsafe(FSessionId sessionId, CPacketBuffer* message);
+	bool SendPacketMultiCast(FSessionId* group, int count, CPacketBuffer* message);
 
 	virtual bool OnConnectionRequest(const wchar_t* ip, unsigned short port) = 0;
-	virtual void OnAccept(SessionId sessionId, const wchar_t* ip, unsigned short port, void*& userData) = 0;
-	virtual void OnRelease(SessionId sessionId, void* userData) = 0;
-	virtual void OnRecv(SessionId sessionId, Serializer* packet) = 0;
-	virtual void OnPrintExternal(wchar_t** wstr, size_t* remaining);
-	virtual void OnError(NetError errCode, const char* errMsg);
+	virtual void OnAccept(FSessionId sessionId, const wchar_t* ip, unsigned short port, void*& userData) = 0;
+	virtual void OnRelease(FSessionId sessionId, void* userData) = 0;
+	virtual void OnRecv(FSessionId sessionId, CPacketView* packet) = 0;
+	virtual void OnPrintExternal(CMonitorTable* table);
+	virtual void OnError(ENetError errCode, const char* errMsg);
 	virtual void OnCollectExternal(MetricsCollector& collector);
 
-	CInternalSession* GetServerContext();
-	Session* CreateSession(SOCKET sock) override;
-	bool ReleaseSession(Session* session) override;
+	CLambdaPipe* GetServerContext();
+	CSession* CreateSession(SOCKET sock) override;
+	bool ReleaseSession(CSession* session) override;
 	int GetSessionCount() { return _sessionCnt; }
 
 	long GetAcceptTPS() 
@@ -84,16 +87,16 @@ public:
 
 	long GetDisconnectCount() { return _disconnectTotal; }
 
-	Session* GetSession(SessionId id)
+	CSession* GetSession(FSessionId id)
 	{
-		Session* session = _sessions[id.internal.idx];
+		CSession* session = &_sessions[id.internal.idx];
 		if (!session->AddRef())
 		{
 			session->ReleasePost();
 			return nullptr;
 		}
 
-		if (session->id != id || session->invalid)
+		if (session->_id != id || session->_invalid)
 		{
 			session->ReleasePost();
 			return nullptr;
@@ -102,7 +105,7 @@ public:
 		return session;
 	}
 
-	bool FreeSession(Session* session) { return session->ReleasePost(); }
+	bool FreeSession(CSession* session) { return session->ReleasePost(); }
 
 	CWorkerThread* Worker() { return _worker; }
 
@@ -112,13 +115,14 @@ public:
 protected:
 	char _isRunning;
 	CWorkerThread* _worker;
-	CInternalSession* _serverContext;
+	CLambdaPipe* _serverContext;
 	ServerMetrics* _serverMetrics;
 	long _sessionCnt;
 	int _maxSession = 0;
 	unsigned int _nextId;
 	CLockFreeStack<int> _sessionIndexStack;
-	std::vector<Session*> _sessions;
+	std::vector<CSession> _sessions;
+	std::vector<IWorkerObserver*> _workerObservers;
 
 private:
 	void AcceptThread();

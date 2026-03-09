@@ -1,10 +1,11 @@
 #pragma once
 #include <JCore/JWindows.h>
-#include <JNet/Session.h>
+#include <JNet/CSession.h>
 
-class CInternalSession;
+class CLambdaPipe;
+class CPacketView;
 
-enum class NetError
+enum class ENetError
 {
 	SEND_BUFFER_LIMIT_REACHED,
 	INVALID_PACKET_HEADER,
@@ -16,11 +17,11 @@ enum class NetError
 class INetworkEntity
 {
 public:
-	virtual Session* CreateSession(SOCKET sock) = 0;
-	virtual bool ReleaseSession(Session* session) = 0;
-	virtual void OnRecv(SessionId sessionId, Serializer* packet) = 0;
-	virtual void OnError(NetError errCode, const char* errMsg) = 0;
-	virtual bool Disconnect(SessionId sessionId) = 0;
+	virtual CSession* CreateSession(SOCKET sock) = 0;
+	virtual bool ReleaseSession(CSession* session) = 0;
+	virtual void OnRecv(FSessionId sessionId, CPacketView* packet) = 0;
+	virtual void OnError(ENetError errCode, const char* errMsg) = 0;
+	virtual bool Disconnect(FSessionId sessionId) = 0;
 
 	virtual ~INetworkEntity() = default;
 };

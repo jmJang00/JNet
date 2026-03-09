@@ -13,7 +13,7 @@ public:
 			bool encoding = false, bool sendBufZero = true);
 	void Stop() override;
 
-	Session* CreateSession(SOCKET sock) override;
+	CSession* CreateSession(SOCKET sock) override;
 
 	CTimerManager* TimerMng() { return _timerMng; }
 	CContentManager* ContentMng() { return _contentMng; }

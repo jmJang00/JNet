@@ -2,21 +2,20 @@
 #include <JCore/CThread.h>
 #include <JCore/SLog.h>
 #include <JNet/CNetClient.h>
-#include <JNet/Session.h>
-#include <JNet/Serializer.h>
+#include <JNet/CSession.h>
+#include <JNet/CPacket.h>
 #include <JNet/CWorkerThread.h>
-#include <JNet/CInternalSession.h>
+#include <JNet/CLambdaPipe.h>
 #include "LogTag.h"
 
 CNetClient::CNetClient(CWorkerThread* worker)
-	: _sock(INVALID_SOCKET)
-	, _session(nullptr)
+	: _session(nullptr)
 	, _worker(worker)
 	, _isRunning(0)
 	, _encoding(false)
 {
-	_session = new Session();
-	_clientContext = new CInternalSession(worker, 1000);
+	_session = new CSession();
+	_clientContext = new CLambdaPipe(worker, 1000);
 }
 
 CNetClient::~CNetClient()
@@ -37,8 +36,8 @@ bool CNetClient::Connect(
 	{
 		SLOGA(JNetLog::Progress, L"Start Connect\n");
 
-		_sock = socket(AF_INET, SOCK_STREAM, 0);
-		if (_sock == INVALID_SOCKET)
+		SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+		if (sock == INVALID_SOCKET)
 		{
 			ELOGA(JNetLog::Progress, L"socket failed, [ErrorCode]:%d", WSAGetLastError());
 			break;
@@ -54,7 +53,7 @@ bool CNetClient::Connect(
 		}
 		clientAddr.sin_port = 0;
 
-		int retval = ::bind(_sock, (SOCKADDR*)&clientAddr, sizeof(clientAddr));
+		int retval = ::bind(sock, (SOCKADDR*)&clientAddr, sizeof(clientAddr));
 		if (retval == SOCKET_ERROR)
 		{
 			ELOGA(JNetLog::Progress, L"bind failed, [ErrorCode]:%d", WSAGetLastError());
@@ -62,7 +61,7 @@ bool CNetClient::Connect(
 		}
 
 		int size = 0;
-		if (setsockopt(_sock, SOL_SOCKET, 
+		if (setsockopt(sock, SOL_SOCKET, 
 			SO_SNDBUF, (char*)&size, sizeof(size)) != 0)
 		{
 			ELOGA(JNetLog::Progress, L"setsockopt failed, [ErrorCode]:%d", WSAGetLastError());
@@ -71,17 +70,17 @@ bool CNetClient::Connect(
 
 		int actual = 0;
 		socklen_t len = sizeof(actual);
-		getsockopt(_sock, SOL_SOCKET, SO_SNDBUF, (char*)&actual, &len);
+		getsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char*)&actual, &len);
 		//SLOGA(L"setsockopt SO_SNDBUF = %d\n", actual);
 
 		if (nagle == false)
 		{
 			DWORD opt = 1;
-			setsockopt(_sock, IPPROTO_TCP, TCP_NODELAY, (char*)&opt, sizeof(opt));
+			setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (char*)&opt, sizeof(opt));
 		}
 
 		LINGER linger = { 1, 0 };
-		setsockopt(_sock, SOL_SOCKET, SO_LINGER, (char*)&linger, sizeof(linger));
+		setsockopt(sock, SOL_SOCKET, SO_LINGER, (char*)&linger, sizeof(linger));
 		//SLOGA(L"setsockopt SO_LINGER = (%d, %d)\n", linger.l_linger, linger.l_onoff);
 
 		addrinfo hints{};
@@ -103,7 +102,7 @@ bool CNetClient::Connect(
 		}
 
 		SOCKADDR_IN* serverAddr = (SOCKADDR_IN*)result->ai_addr;
-		if (connect(_sock, (SOCKADDR*)serverAddr, sizeof(*serverAddr)) == SOCKET_ERROR)
+		if (connect(sock, (SOCKADDR*)serverAddr, sizeof(*serverAddr)) == SOCKET_ERROR)
 		{
 			freeaddrinfo(result);
 			ELOGA(JNetLog::Progress, L"connect failed, [ErrorCode]:%d", WSAGetLastError());
@@ -114,9 +113,7 @@ bool CNetClient::Connect(
 
 		_encoding = encoding;
 
-		_clientContext->Resume();
-
-		_session = CreateSession(_sock);
+		_session = CreateSession(sock);
 		if (_session == nullptr)
 		{
 			ELOGA(JNetLog::Progress, L"CreateSession(): session is nullptr");
@@ -125,7 +122,7 @@ bool CNetClient::Connect(
 
 		OnEnterJoinServer();
 
-		if ((_session->refCnt & 0x80000000) == 0)
+		if ((_session->_refCnt & 0x80000000) == 0)
 		{
 			CRASH(true);
 		}
@@ -149,17 +146,17 @@ bool CNetClient::Connect(
 
 void CNetClient::Clear()
 {
-	_clientContext->Suspend();
-
 	while (_isRunning)
 	{
 		Sleep(100);
 	}
 
+	_clientContext->ClearPendingTasks();
+
 	_encoding = false;
 }
 
-Session* CNetClient::CreateSession(SOCKET sock)
+CSession* CNetClient::CreateSession(SOCKET sock)
 {
 	char ip[16] = { 0 };
 	SOCKADDR_IN clientAddr;
@@ -168,7 +165,7 @@ Session* CNetClient::CreateSession(SOCKET sock)
 	inet_ntop(AF_INET, &clientAddr.sin_addr, ip, 16);
 	unsigned short port = ntohs(clientAddr.sin_port);
 
-	SessionId sessionId;
+	FSessionId sessionId;
 	sessionId.total = 0;
 
 	if (!_worker->Register(_session, sock))
@@ -176,14 +173,14 @@ Session* CNetClient::CreateSession(SOCKET sock)
 		return nullptr;
 	}
 
-	_session->Start(sock, _worker->_hIOCP, this, nullptr, sessionId, _encoding);
+	_session->Start(sock, _worker, this, nullptr, sessionId, _encoding);
 
 	_isRunning = true;
 
 	return _session;
 }
 
-bool CNetClient::ReleaseSession(Session* session)
+bool CNetClient::ReleaseSession(CSession* session)
 {
 	OnLeaveServer();
 	session->Reset();
@@ -196,12 +193,12 @@ bool CNetClient::IsConnected()
 	return _isRunning; 
 }
 
-CInternalSession* CNetClient::GetClientContext()
+CLambdaPipe* CNetClient::GetClientContext()
 {
 	return _clientContext;
 }
 
-bool CNetClient::Disconnect(SessionId sessionId)
+bool CNetClient::Disconnect(FSessionId sessionId)
 {
 	if (!_session->AddRef())
 	{
@@ -209,21 +206,21 @@ bool CNetClient::Disconnect(SessionId sessionId)
 		return false;
 	}
 
-	if (_session->id.total != sessionId.total || InterlockedExchange(&_session->disconnect, 1) == 1)
+	if (_session->_id.total != sessionId.total || InterlockedExchange8(&_session->_disconnect, 1) == 1)
 	{
 		_session->ReleasePost();
 		return false;
 	}
 
-	InterlockedExchange(&_session->invalid, 1);
-	CancelIoEx((HANDLE)_session->sock, (OVERLAPPED*)_session->recvOverlapped);
-	CancelIoEx((HANDLE)_session->sock, (OVERLAPPED*)_session->sendOverlapped);
+	InterlockedExchange8(&_session->_invalid, 1);
+	CancelIoEx((HANDLE)_session->_sock, (OVERLAPPED*)_session->_recvOverlapped);
+	CancelIoEx((HANDLE)_session->_sock, (OVERLAPPED*)_session->_sendOverlapped);
 
 	_session->ReleasePost();
 	return true;
 }
 
-bool CNetClient::SendPacket(Serializer* packet)
+bool CNetClient::SendPacket(CPacketBuffer* packet)
 {
 	if (!_session->AddRef())
 	{
@@ -231,31 +228,26 @@ bool CNetClient::SendPacket(Serializer* packet)
 		return false;
 	}
 
-	if (_session->invalid == 1)
+	if (_session->_invalid == 1)
 	{
 		_session->ReleasePost();
 		return false;
 	}
 
-	Serializer* newMessage = Serializer::Alloc(packet);
+	packet->AddRef();
 
-	if (!newMessage->HasHeader())
+	if (!_session->_sendBuf->Enqueue(packet))
 	{
-		newMessage->MakeHeader(_encoding);
-	}
-
-	if (!_session->sendBuf.Enqueue(newMessage))
-	{
-		OnError(NetError::SEND_BUFFER_LIMIT_REACHED, "SendPacket(): Packet count exceeds send buffer limit");
+		OnError(ENetError::SEND_BUFFER_LIMIT_REACHED, "SendPacket(): Packet count exceeds send buffer limit");
 		_session->ReleasePost();
-		Serializer::Free(newMessage);
-		Disconnect(_session->id);
+		packet->Release();
+		Disconnect(_session->_id);
 		return false;
 	}
 
-	if (InterlockedExchange(&_session->sending, 1) == 0)
+	if (InterlockedExchange8(&_session->_sending, 1) == 0)
 	{
-		PostQueuedCompletionStatus(_worker->_hIOCP, 0, (ULONG_PTR)_session, (LPOVERLAPPED)CWorkerThread::SEND_START);
+		_worker->PostStatus((ULONG_PTR)_session, (LPOVERLAPPED)CWorkerThread::SEND_START);
 	}
 	else
 	{
@@ -272,7 +264,7 @@ bool CNetClient::Disconnect()
 		return false;
 	}
 
-	Disconnect(_session->id);
+	Disconnect(_session->_id);
 	
 	Clear();
 

@@ -1,10 +1,11 @@
 #include "pch.h"
 #include <algorithm>
-#include <JNet/CInternalSession.h>
+#include <JNet/CLambdaPipe.h>
 #include <JNet/CContent.h>
 #include <JNet/CAppServer.h>
 #include <JNet/CTimerManager.h>
 #include <JNet/CContentManager.h>
+#include <JNet/CPacket.h>
 
 CContent::CContent(CAppServer* server, int frameMs)
 	: _updateQ(10000)
@@ -45,22 +46,22 @@ void CContent::Reset()
 	InterlockedExchange((uintptr_t*)&_node, (uintptr_t)nullptr);
 }
 
-void CContent::Enter(Session* session)
+void CContent::Enter(CSession* session)
 {
 	// 이건 유저가 결정하도록 하자
 	//if (session->contentQ.GetSize() > 0)
 	//{
-	//	_server->OnError(NetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
+	//	_server->OnError(ENetError::RECV_UNKNOWN_DEST_PACKET, "RecvProc(): Received a packet whose destination is unknown");
 	//	_server->Disconnect(session->id);
 	//}
-	OnEnter(session->id, session->user);
-	_sessionMap.insert({ session->id, session });
+	OnEnter(session->_id, session->_userData);
+	_sessions.insert(session->_id);
 }
 
-void CContent::Leave(Session* session)
+void CContent::Leave(CSession* session)
 {
-	_sessionMap.erase(session->id);
-	OnLeave(session->id, session->user);
+	_invalidSessions.push_back(session->_id);
+	OnLeave(session->_id, session->_userData);
 	_server->ContentMng()->FreeContent(_node);
 }
 
@@ -106,13 +107,21 @@ void CContent::Start()
 	SetEvent(_startEvent);
 }
 
+void CContent::DisconnectSession()
+{
+	for (FSessionId session : _sessions)
+	{
+		_server->Disconnect(session);
+	}
+}
+
 void CContent::ClearSession()
 {
-	for (auto& it : _sessionMap)
+	for (auto session : _invalidSessions)
 	{
-		Session* session = it.second;
-		_server->Disconnect(session->id);
+		_sessions.erase(session);
 	}
+	_invalidSessions.clear();
 }
 
 void CContent::BeginShutdown()
@@ -196,14 +205,14 @@ void CContent::ProcessUpdateQueue()
 		{
 		case ESystemMessageType::MSG_ENTER:
 		{
-			Session* session = msg.session;
+			CSession* session = msg.session;
 			Enter(session);
 			_server->FreeSession(session);
 			break;
 		}
 		case ESystemMessageType::MSG_RELEASE:
 		{
-			Session* session = msg.session;
+			CSession* session = msg.session;
 			Leave(session);
 			_server->ReleaseSession(session);
 			break;
@@ -248,20 +257,20 @@ void CContent::ClearInvalidHandles()
 
 void CContent::ClearRequest()
 {
-	FInternalTask* task;
+	FLambdaTask* task;
 	while (_requestQ.Dequeue(&task))
 	{
-		FInternalTask::ReleaseTask(task);
+		FLambdaTask::ReleaseTask(task);
 	}
 }
 
 void CContent::ProcessRequest()
 {
-	FInternalTask* task;
+	FLambdaTask* task;
 	while (_requestQ.Dequeue(&task))
 	{
 		task->Invoke();
-		FInternalTask::ReleaseTask(task);
+		FLambdaTask::ReleaseTask(task);
 	}
 }
 
@@ -271,26 +280,39 @@ void CContent::Update()
 
 	if (_registered == CContent::Closing)
 	{
-		ClearSession();
+		DisconnectSession();
 	}
 
-	for (auto it = _sessionMap.begin(); it != _sessionMap.end(); ++it)
+	CPacketBuffer buffer;
+	for (auto it = _sessions.begin(); it != _sessions.end(); ++it)
 	{
-		SessionId id = it->first;
-		Session* session = _server->GetSession(id);
+		FSessionId id = *it;
+		CSession* session = _server->GetSession(id);
 		if (session == nullptr)
 		{
 			continue;
 		}
 
-		Serializer* packet;
-		while (session->contentQ.Dequeue(&packet))
+		unsigned short len;
+		while (1)
 		{
-			OnRecv(session->id, packet);
+			if (session->_contentQ->GetUseSize() > sizeof(len))
+			{
+				session->_contentQ->Dequeue((char*)&len, sizeof(len));
+				session->_contentQ->Dequeue(buffer.GetBufferPtr(), len);
+				CPacketView packet(&buffer, 0, len);
+				OnRecv(session->_id, &packet);
+			}
+			else
+			{
+				break;
+			}
 		}
 
 		_server->FreeSession(session);
 	}
+
+	ClearSession();
 
 	DWORD tick = timeGetTime();
 	int deltaTick = tick - _frameTick;

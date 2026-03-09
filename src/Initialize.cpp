@@ -1,6 +1,6 @@
 #include "pch.h"
 #include <JNet/Initialize.h>
-#include <JNet/CInternalSession.h>
+#include <JNet/CLambdaPipe.h>
 #include <JCore/SLog.h>
 #include <JCore/Initialize.h>
 #include "LogTag.h"
@@ -22,7 +22,7 @@ void JNetInit::Initialize()
 		if (_init == 0)
 		{
 			JCoreInit::Initialize();
-			FInternalTask::_taskPool = new CTlsMemoryPool<FInternalTask>(PoolRegistry::RegisterDebugSign("FInternalTask"), false);
+			FLambdaTask::_taskPool = new CTlsMemoryPool<FLambdaTask>(PoolRegistry::RegisterDebugSign("FLambdaTask"), false);
 			timeBeginPeriod(1);
 			WSADATA wsa;
 			if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
@@ -48,7 +48,7 @@ void JNetInit::Release()
 
 		if (_init == 1)
 		{
-			delete FInternalTask::_taskPool;
+			delete FLambdaTask::_taskPool;
 			timeEndPeriod(1);
 			WSACleanup();
 			InterlockedExchange(&_init, 0);

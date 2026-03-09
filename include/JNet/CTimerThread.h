@@ -4,7 +4,7 @@
 #include <mutex>
 #include <JCore/CThread.h>
 #include <JCore/ScopedLock.h>
-#include <JNet/CInternalSession.h>
+#include <JNet/CLambdaPipe.h>
 #include <JNet/Types.h>
 #include <queue>
 

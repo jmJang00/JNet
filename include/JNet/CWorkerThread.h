@@ -1,10 +1,24 @@
 #pragma once
 #include <atomic>
+#include <vector>
 #include <JCore/CThread.h>
 #include <JNet/Types.h>
+#include <JNet/CMonitorThread.h>
 
-class Session;
+class CSession;
 class INetworkEntity;
+
+struct WorkerMetrics
+{
+	double cpuUsage = 0;
+};
+
+class IWorkerObserver
+{
+public:
+	virtual void OnWorkerStart() = 0;
+	virtual ~IWorkerObserver() = default;
+};
 
 class CWorkerThread : public CThread
 {
@@ -17,11 +31,13 @@ public:
 		POST_CONTENT = 0xfff4,
 	};
 
+	static const int ASSEMBLE_LIMIT = 5;
+
 	CWorkerThread(int threadCnt, int concurrentThreadCnt);
 
 	virtual ~CWorkerThread();
 
-	void Start();
+	void Start(const std::vector<IWorkerObserver*>& observers);
 
 	void Stop();
 
@@ -29,11 +45,13 @@ public:
 
 	bool PostStatus(uintptr_t compKey, OVERLAPPED* ov, unsigned int transferred = 0);
 
-	bool Register(Session* session, SOCKET sock);
+	bool Register(CSession* session, SOCKET sock);
 
-	void RecvProc(Session* session);
+	void RecvProc(CSession* session);
 
-	void RecvProcDecoding(Session* session);
+	void RecvProcDecoding(CSession* session);
+
+	void SendProc(CSession* session);
 
 	void RefreshStatistics()
 	{
@@ -49,11 +67,17 @@ public:
 	long GetSendBytes() { return InterlockedExchange(&_sendBytes, 0); }
 	bool8 IsRunning() { return _isRunning; }
 
+	void OnPrintExternal(CMonitorTable* table);
+	void OnCollectExternal(MetricsCollector& collector);
+
 	void WorkerThread();
 
 	HANDLE _hIOCP;
 	std::atomic<bool8> _isRunning;
 
+	unsigned int _prevTime;
+	std::vector<IWorkerObserver*> _workerObservers;
+	std::vector<WorkerMetrics> _workerMetrics;
 	int _threadCnt;
 	long _recvBytes;
 	long _sendBytes;

@@ -15,10 +15,10 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="pch.h">
+    <ClInclude Include="src\pch.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\JNet\CInternalSession.h">
+    <ClInclude Include="include\JNet\CLambdaPipe.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\JNet\CNetClient.h">
@@ -36,13 +36,13 @@
     <ClInclude Include="include\JNet\INetworkEntity.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\JNet\PacketBuffer.h">
+    <ClInclude Include="include\JNet\CPacketBuffer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\JNet\Serializer.h">
+    <ClInclude Include="include\JNet\CPacket.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\JNet\Session.h">
+    <ClInclude Include="include\JNet\CSession.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\LogTag.h">
@@ -69,7 +69,7 @@
     <ClInclude Include="include\JNet\CAppServer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\JNet\SystemMessage.h">
+    <ClInclude Include="include\JNet\FSystemMessage.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\JNet\CObjectRingBuffer.h">
@@ -82,6 +82,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\JNet\CContentQueue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\JNet\CPacketView.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\JNet\CStreamReader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\JNet\CStreamWriter.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -101,13 +110,13 @@
     <ClCompile Include="src\CWorkerThread.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\PacketBuffer.cpp">
+    <ClCompile Include="src\CPacketBuffer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Serializer.cpp">
+    <ClCompile Include="src\CPacket.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Session.cpp">
+    <ClCompile Include="src\CSession.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\LogTag.cpp">
@@ -125,7 +134,7 @@
     <ClCompile Include="src\CContentManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\CInternalSession.cpp">
+    <ClCompile Include="src\CLambdaPipe.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\Initialize.cpp">
@@ -135,6 +144,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\PacketHeader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CPacketView.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

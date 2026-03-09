@@ -1,5 +1,5 @@
 #pragma once
-#include <JNet/Session.h>
+#include <JNet/CSession.h>
 
 enum class ESystemMessageType : unsigned char
 {
@@ -11,7 +11,7 @@ enum class ESystemMessageType : unsigned char
 struct FSystemMessage
 {
 	FSystemMessage() = default;
-	FSystemMessage(ESystemMessageType type, Session* session, uint64_t payload)
+	FSystemMessage(ESystemMessageType type, CSession* session, uint64_t payload)
 		: type(type)
 		, session(session)
 		, payload(payload)
@@ -19,6 +19,6 @@ struct FSystemMessage
 	}
 
 	ESystemMessageType type;
-	Session* session;
+	CSession* session;
 	uint64_t payload;
 };

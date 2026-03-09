@@ -36,11 +36,7 @@ public:
 	int sendBufferPoolCnt;
 	long long rx;
 	long long tx;
-	//double procUser;
-	//double procKernel;
-	//double sysUser;
-	//double sysKernel;
-	std::vector<std::pair<int, int>>  bucketPool;
+	std::vector<std::pair<int, int>> bucketPool;
 
 private:
 	std::vector<CNetServer*> _servers;
@@ -53,10 +49,6 @@ private:
 	PDH_HCOUNTER availableMBytesCounter;
 	PDH_HCOUNTER poolNonpagedBytesCounter;
 	PDH_HCOUNTER committedBytesCounter;
-	//PDH_HCOUNTER procUserCounter;
-	//PDH_HCOUNTER procKernelCounter;
-	//PDH_HCOUNTER sysUserCounter;
-	//PDH_HCOUNTER sysKernelCounter;
 	PDH_HCOUNTER rxCounter;
 	PDH_HCOUNTER txCounter;
 	PDH_HQUERY pdhQuery;
@@ -82,4 +74,30 @@ public:
 private:
 	const wchar_t* _projectName;
 	std::vector<CNetServer*> _servers;
+};
+
+class CMonitorTable
+{
+public:
+    inline static constexpr int MONITOR_BUFFER_SIZE = 12000;
+
+    CMonitorTable(int inColumnWidth);
+    
+	void PrintColumnFormat(int cnt, const wchar_t* inFormat, ...);
+	void PrintColumnStr(int cnt, const wchar_t* inWstr);
+	void PrintText(const wchar_t* inFormat, ...);
+
+	void PrintLineFeed();
+	void PrintDivider();
+	void PrintBoldDivder();
+	void Clear();
+
+	wchar_t* Content();
+
+private:
+	int columnWidth;
+	int column;
+    wchar_t monitorBuffer[MONITOR_BUFFER_SIZE];
+    wchar_t* wstr;
+    size_t remaining;
 };

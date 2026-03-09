@@ -46,7 +46,7 @@ void CAppServer::Stop()
 	_timerMng->Stop();
 }
 
-Session* CAppServer::CreateSession(SOCKET sock)
+CSession* CAppServer::CreateSession(SOCKET sock)
 {
 	if (_sessionCnt >= _maxSession)
 	{
@@ -69,11 +69,11 @@ Session* CAppServer::CreateSession(SOCKET sock)
 			return nullptr;
 		}
 
-		SessionId sessionId;
+		FSessionId sessionId;
 		sessionId.internal.id = _nextId++;
 		sessionId.internal.idx = idx;
 
-		Session* session = _sessions[sessionId.internal.idx];
+		CSession* session = &_sessions[sessionId.internal.idx];
 
 		if (!_worker->Register(session, sock))
 		{
@@ -81,7 +81,7 @@ Session* CAppServer::CreateSession(SOCKET sock)
 			return nullptr;
 		}
 
-		session->Start(sock, _worker->_hIOCP, this, _contentMng, sessionId, _encoding);
+		session->Start(sock, _worker, this, _contentMng, sessionId, _encoding);
 
 		InterlockedIncrement(&_sessionCnt);
 
