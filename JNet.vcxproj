@@ -156,6 +156,7 @@
     <ClInclude Include="include\JNet\CStreamReader.h" />
     <ClInclude Include="include\JNet\CStreamWriter.h" />
     <ClInclude Include="include\JNet\CWorkerThread.h" />
+    <ClInclude Include="include\JNet\FBufferView.h" />
     <ClInclude Include="include\JNet\FContentHandle.h" />
     <ClInclude Include="include\JNet\INetworkEntity.h" />
     <ClInclude Include="include\JNet\Initialize.h" />

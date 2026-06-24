@@ -39,6 +39,8 @@ public:
 
 	void Start(const std::vector<IWorkerObserver*>& observers);
 
+	void Start();
+
 	void Stop();
 
 	void Shutdown();

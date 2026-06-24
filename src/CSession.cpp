@@ -1,7 +1,6 @@
 #include "pch.h"
 #include <map>
 #include <algorithm>
-#include <JCore/SLog.h>
 #include <JCore/Profiler.h>
 #include <JNet/CSession.h>
 #include <JNet/CNetServer.h>

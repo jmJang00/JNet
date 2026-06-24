@@ -4,6 +4,8 @@
 
 class CLambdaPipe;
 class CPacketView;
+class CMonitorTable;
+class MetricsCollector;
 
 enum class ENetError
 {
@@ -12,6 +14,7 @@ enum class ENetError
 	PAKCET_CHECKSUM_MISMATCH,
 	PACKET_SIZE_LIMIT_EXCEEDED,
 	RECV_UNKNOWN_DEST_PACKET,
+	MOVE_TO_INVALID_CONTENT,
 };
 
 class INetworkEntity
@@ -22,6 +25,8 @@ public:
 	virtual void OnRecv(FSessionId sessionId, CPacketView* packet) = 0;
 	virtual void OnError(ENetError errCode, const char* errMsg) = 0;
 	virtual bool Disconnect(FSessionId sessionId) = 0;
+	virtual void OnPrintExternal(CMonitorTable* table) = 0;
+	virtual void OnCollectExternal(MetricsCollector& collector) = 0;
 
 	virtual ~INetworkEntity() = default;
 };

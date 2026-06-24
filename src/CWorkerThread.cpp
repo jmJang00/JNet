@@ -1,5 +1,4 @@
 #include "pch.h"
-#include <JCore/SLog.h>
 #include <JNet/PacketHeader.h>
 #include <JNet/CWorkerThread.h>
 #include <JNet/CSession.h>
@@ -49,6 +48,13 @@ CWorkerThread::~CWorkerThread()
 void CWorkerThread::Start(const std::vector<IWorkerObserver*>& observers)
 { 
 	_workerObservers = observers;
+	Resume();
+	_isRunning.store(true);
+}
+
+void CWorkerThread::Start()
+{
+	_workerObservers.clear();
 	Resume();
 	_isRunning.store(true);
 }
@@ -261,7 +267,7 @@ void CWorkerThread::RecvProc(CSession* session)
 			newBuffer->AddRef();
 			memcpy(newBuffer->GetBufferPtr(), session->_recvBuf->GetDataPtr(), dataSize);
 			newBuffer->MoveWritePos(dataSize);
-			CPacketBuffer::Free(session->_recvBuf);
+			session->_recvBuf->Release();
 			session->_recvBuf = newBuffer;
 		}
 	}
@@ -322,7 +328,7 @@ void CWorkerThread::OnCollectExternal(MetricsCollector& collector)
 
 void CWorkerThread::WorkerThread()
 {
-	SLOGA(JNetLog::Network, L"Worker Thread Start\n");
+	SLOGA(JNetLog::Network, L"Worker Thread Start");
 	Context* ctxt = GetContextPtr();
 	for (int i = 0; i < _workerObservers.size(); i++)
 	{
@@ -344,7 +350,7 @@ void CWorkerThread::WorkerThread()
 
 		if (overlapped == nullptr && compKey == 0 && transferred == 0)
 		{
-			SLOGA(JNetLog::Network, L"# 종료 메시지 수신\n");
+			SLOGA(JNetLog::Network, L"# 종료 메시지 수신");
 			PostQueuedCompletionStatus(_hIOCP, 0, 0, nullptr);
 			break;
 		}
@@ -422,7 +428,9 @@ void CWorkerThread::WorkerThread()
 			}
 
 			InterlockedAdd(&_recvBytes, (long)transferred);
+			DISABLE_WARNINGS_BEGIN(WARNING_4244)
 			session->_recvBuf->MoveWritePos(transferred);
+			DISABLE_WARNINGS_END()
 			if (session->_encoding)
 			{
 				RecvProcDecoding(session);
@@ -486,5 +494,5 @@ void CWorkerThread::WorkerThread()
 		session->Release();
 	}
 
-	SLOGA(JNetLog::Network, L"Worker Thread Exit\n");
+	SLOGA(JNetLog::Network, L"Worker Thread Exit");
 }

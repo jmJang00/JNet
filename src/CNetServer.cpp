@@ -71,7 +71,7 @@ bool CNetServer::Start(const char* ip, const char* port, bool nagle = true,
 {
 	do
 	{
-		SLOGA(JNetLog::Progress, L"Start Server\n");
+		SLOGA(JNetLog::Progress, L"Start Server");
 
 		_listenSock = socket(AF_INET, SOCK_STREAM, 0);
 		if (_listenSock == INVALID_SOCKET)
@@ -113,19 +113,19 @@ bool CNetServer::Start(const char* ip, const char* port, bool nagle = true,
 		{
 			int size = 0;
 			setsockopt(_listenSock, SOL_SOCKET, SO_SNDBUF, (char*)&size, sizeof(size));
-			SLOGA(JNetLog::Progress, L"setsockopt SO_SNDBUG = 0\n");
+			SLOGA(JNetLog::Progress, L"setsockopt SO_SNDBUG = 0");
 		}
 
 		if (nagle == false)
 		{
 			DWORD opt = 1;
 			setsockopt(_listenSock, IPPROTO_TCP, TCP_NODELAY, (char*)&opt, sizeof(opt));
-			SLOGA(JNetLog::Progress, L"setsockopt TCP_NODELAY\n");
+			SLOGA(JNetLog::Progress, L"setsockopt TCP_NODELAY");
 		}
 
 		LINGER linger = { 1, 0 };
 		setsockopt(_listenSock, SOL_SOCKET, SO_LINGER, (char*)&linger, sizeof(linger));
-		SLOGA(JNetLog::Progress, L"setsockopt SO_LINGER = (%d, %d)\n", linger.l_linger, linger.l_onoff);
+		SLOGA(JNetLog::Progress, L"setsockopt SO_LINGER = (%d, %d)", linger.l_linger, linger.l_onoff);
 
 		retval = listen(_listenSock, SOMAXCONN_HINT(_maxSession));
 		if (retval == SOCKET_ERROR)
@@ -150,7 +150,7 @@ bool CNetServer::Start(const char* ip, const char* port, bool nagle = true,
 
 void CNetServer::Stop()
 {
-	SLOGA(JNetLog::Progress, L"Stop Server\n");
+	SLOGA(JNetLog::Progress, L"Stop Server");
 
 	InterlockedExchange8(&_isRunning, 0);
 
@@ -304,7 +304,7 @@ bool CNetServer::SendPacketMultiCast(FSessionId* group, int count, CPacketBuffer
 
 void CNetServer::OnError(ENetError errCode, const char* errMsg)
 {
-	DLOGA(JNetLog::Network, L"%S\n", errMsg);
+	DLOGA(JNetLog::Network, L"%S", errMsg);
 }
 
 void CNetServer::OnCollectExternal(MetricsCollector& collector)
@@ -411,7 +411,7 @@ bool CNetServer::ReleaseSession(CSession* session)
 
 void CNetServer::AcceptThread()
 {
-	SLOGA(JNetLog::Progress, L"Accept Thread Start\n");
+	SLOGA(JNetLog::Progress, L"Accept Thread Start");
 
 	while (1)
 	{
@@ -443,10 +443,6 @@ void CNetServer::AcceptThread()
 			CRASH(true);
 		}
 
-#ifdef SESSION_DEBUG
-		session->debug[(InterlockedIncrement(&session->debugIndex)) % 100] = "First Recv Post";
-#endif
-
 		if (session->RecvPost())
 		{
 			if (session->_invalid == 1)
@@ -461,5 +457,5 @@ void CNetServer::AcceptThread()
 		}
 	}
 
-	SLOGA(JNetLog::Progress, L"Accept Thread Exit\n");
+	SLOGA(JNetLog::Progress, L"Accept Thread Exit");
 }

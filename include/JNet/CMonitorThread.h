@@ -4,13 +4,14 @@
 #pragma comment(lib, "Pdh.lib")
 #include <JCore/CCpuUsage.h>
 #include <JCore/SLog.h>
+#include <JNet/INetworkEntity.h>
 
 class CNetServer;
 
 class MetricsCollector
 {
 public:
-	MetricsCollector(std::vector<CNetServer*>& servers, const wchar_t* projectName);
+	MetricsCollector(std::vector<INetworkEntity*>& servers, const wchar_t* projectName);
 	void Collect();
 
 public:
@@ -59,9 +60,9 @@ class CMonitorThread : public CThread
 public:
 	inline static constexpr int MONITOR_BUFFER_SIZE = 6000;
 
-	CMonitorThread(const wchar_t* projectName, std::vector<CNetServer*>& servers);
+	CMonitorThread(const wchar_t* projectName, std::vector<INetworkEntity*>& servers);
 
-	CMonitorThread(const wchar_t* projectName, CNetServer* server);
+	CMonitorThread(const wchar_t* projectName, INetworkEntity* server);
 
 	~CMonitorThread();
 
@@ -71,9 +72,12 @@ public:
 
 	void MonitorThread();
 
+	static void Turn(bool on) { _printMonitor = on; };
+
 private:
 	const wchar_t* _projectName;
-	std::vector<CNetServer*> _servers;
+	static bool _printMonitor;
+	std::vector<INetworkEntity*> _entities;
 };
 
 class CMonitorTable

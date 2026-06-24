@@ -9,7 +9,7 @@
 #include "LogTag.h"
 #include <JCore/CommonDefs.h>
 
-MetricsCollector::MetricsCollector(std::vector<CNetServer*>& servers, const wchar_t* projectName)
+MetricsCollector::MetricsCollector(std::vector<INetworkEntity*>& servers, const wchar_t* projectName)
 {
     recordTime = time(nullptr);
     SYSTEM_INFO si;
@@ -157,10 +157,10 @@ void MetricsCollector::Collect()
     recordTime = time(nullptr);
 }
 
-CMonitorThread::CMonitorThread(const wchar_t* projectName, std::vector<CNetServer*>& servers)
+CMonitorThread::CMonitorThread(const wchar_t* projectName, std::vector<INetworkEntity*>& servers)
     : CThread([this]() { MonitorThread(); }, 1)
 {
-    _servers = servers;
+    _entities = servers;
     _projectName = projectName;
     if (!Create(true))
     {
@@ -169,10 +169,10 @@ CMonitorThread::CMonitorThread(const wchar_t* projectName, std::vector<CNetServe
     }
 }
 
-CMonitorThread::CMonitorThread(const wchar_t* projectName, CNetServer* server)
+CMonitorThread::CMonitorThread(const wchar_t* projectName, INetworkEntity* server)
     : CThread([this]() { MonitorThread(); }, 1)
 {
-    _servers.push_back(server);
+    _entities.push_back(server);
     _projectName = projectName;
     if (!Create(true))
     {
@@ -293,12 +293,14 @@ wchar_t* CMonitorTable::Content()
 	return monitorBuffer;
 }
 
+bool CMonitorThread::_printMonitor = false;
+
 void CMonitorThread::MonitorThread()
 {
     Context* ctxt = CThread::GetContextPtr();
-    SLOGA(JNetLog::Network, L"Monitor Thread Start\n");
+    SLOGA(JNetLog::Network, L"Monitor Thread Start");
 
-    MetricsCollector collector(_servers, _projectName);
+    MetricsCollector collector(_entities, _projectName);
 
     struct tm localTime;
     localtime_s(&localTime, &collector.recordTime);
@@ -330,12 +332,12 @@ void CMonitorThread::MonitorThread()
         }
 
         collector.Collect();
-        for (int i = 0; i < _servers.size(); i++)
+        for (int i = 0; i < _entities.size(); i++)
         {
-            _servers[i]->OnCollectExternal(collector);
+            _entities[i]->OnCollectExternal(collector);
         }
 
-        if (Logger::GetPrintLogLevel() == 0)
+        if (!_printMonitor)
         {
             continue;
         }
@@ -399,9 +401,9 @@ void CMonitorThread::MonitorThread()
 
         table->PrintText(L"\nServer Monitoring\n");
         table->PrintDivider();
-        for (int i = 0; i < _servers.size(); i++)
+        for (int i = 0; i < _entities.size(); i++)
         {
-            CNetServer* server = _servers[i];
+            INetworkEntity* server = _entities[i];
             server->OnPrintExternal(table);
         }
         table->PrintBoldDivder();
@@ -411,10 +413,10 @@ void CMonitorThread::MonitorThread()
         {
             Logger::WriteLogFile(filePath, table->Content(), MONITOR_BUFFER_SIZE - (int)remaining);
         }
-        printf("%ls", table->Content());
+        printf("\n\n%ls", table->Content());
     }
 
     delete[] filePath;
-    SLOGA(JNetLog::Network, L"Monitor Thread Exit\n");
+    SLOGA(JNetLog::Network, L"Monitor Thread Exit");
 }
 

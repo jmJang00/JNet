@@ -24,6 +24,8 @@ public:
 	virtual void OnLeaveServer() = 0;
 	virtual void OnError(ENetError errCode, const char* errMsg) = 0;
 	virtual void OnRecv(FSessionId sessionId, CPacketView* packet) = 0;
+	virtual void OnPrintExternal(CMonitorTable* table) {};
+	virtual void OnCollectExternal(MetricsCollector& collector) {};
 
 	virtual CSession* CreateSession(SOCKET sock);
 	virtual bool ReleaseSession(CSession* session);

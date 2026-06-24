@@ -50,6 +50,20 @@ public:
 		return *(T*)this;
 	}
 
+	T& operator>>(bool& value)
+	{
+		if (_headPos + sizeof(value) <= _endPos)
+		{
+			value = *((bool*)(_buffer + _headPos));
+			_headPos += sizeof(value);
+		}
+		else
+		{
+			_err = ErrorDeserialize;
+		}
+		return *(T*)this;
+	}
+
 	T& operator>>(short& value)
 	{
 		if (_headPos + sizeof(value) <= _endPos)

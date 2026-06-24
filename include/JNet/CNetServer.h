@@ -62,8 +62,8 @@ public:
 	virtual void OnAccept(FSessionId sessionId, const wchar_t* ip, unsigned short port, void*& userData) = 0;
 	virtual void OnRelease(FSessionId sessionId, void* userData) = 0;
 	virtual void OnRecv(FSessionId sessionId, CPacketView* packet) = 0;
-	virtual void OnPrintExternal(CMonitorTable* table);
 	virtual void OnError(ENetError errCode, const char* errMsg);
+	virtual void OnPrintExternal(CMonitorTable* table);
 	virtual void OnCollectExternal(MetricsCollector& collector);
 
 	CLambdaPipe* GetServerContext();
@@ -96,7 +96,7 @@ public:
 			return nullptr;
 		}
 
-		if (session->_id != id || session->_invalid)
+		if (session->_id != id)
 		{
 			session->ReleasePost();
 			return nullptr;

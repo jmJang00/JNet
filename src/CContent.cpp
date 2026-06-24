@@ -7,7 +7,7 @@
 #include <JNet/CContentManager.h>
 #include <JNet/CPacket.h>
 
-CContent::CContent(CAppServer* server, int frameMs)
+CContent::CContent(CAppServer* server, int frameMs, bool disconnectOnExit)
 	: _updateQ(10000)
 	, _frameMs(frameMs)
 	, _server(server)
@@ -15,6 +15,7 @@ CContent::CContent(CAppServer* server, int frameMs)
 	, _frameTick(0)
 	, _oldTick(0)
 	, _shutdown(false)
+	, _disconnectOnExit(disconnectOnExit)
 	, _timers(10000)
 	, _node(nullptr)
 	, _registered(0)
@@ -60,7 +61,7 @@ void CContent::Enter(CSession* session)
 
 void CContent::Leave(CSession* session)
 {
-	_invalidSessions.push_back(session->_id);
+	_sessions.erase(session->_id);
 	OnLeave(session->_id, session->_userData);
 	_server->ContentMng()->FreeContent(_node);
 }
@@ -115,13 +116,12 @@ void CContent::DisconnectSession()
 	}
 }
 
-void CContent::ClearSession()
+void CContent::MoveSession(FContentHandle handle)
 {
-	for (auto session : _invalidSessions)
+	for (FSessionId session : _sessions)
 	{
-		_sessions.erase(session);
+		_server->ContentMng()->MoveTo(session, handle);
 	}
-	_invalidSessions.clear();
 }
 
 void CContent::BeginShutdown()
@@ -217,6 +217,24 @@ void CContent::ProcessUpdateQueue()
 			_server->ReleaseSession(session);
 			break;
 		}
+		case ESystemMessageType::MSG_LEAVE:
+		{
+			CSession* session = msg.session;
+			Leave(session);
+			FContentNode* nextContentNode = (FContentNode*)msg.payload;
+			if (nextContentNode == nullptr)
+			{
+				// 워커스레드로 이동하는 경우
+				_server->FreeSession(session);
+			}
+			else
+			{
+				// Enter에서 FreeSession을 해줌
+				FSystemMessage msg(ESystemMessageType::MSG_ENTER, session, 0);
+				nextContentNode->content->Enqueue(&msg);
+			}
+			break;
+		}
 		default:
 		{
 			break;
@@ -264,7 +282,7 @@ void CContent::ClearRequest()
 	}
 }
 
-void CContent::ProcessRequest()
+void CContent::ProcessRequestQueue()
 {
 	FLambdaTask* task;
 	while (_requestQ.Dequeue(&task))
@@ -278,9 +296,18 @@ void CContent::Update()
 {
 	ProcessUpdateQueue();
 
+	ProcessRequestQueue();
+
 	if (_registered == CContent::Closing)
 	{
-		DisconnectSession();
+		if (_disconnectOnExit)
+		{
+			DisconnectSession();
+		}
+		else
+		{
+			MoveSession(FContentHandle::NONE);
+		}
 	}
 
 	CPacketBuffer buffer;
@@ -291,6 +318,14 @@ void CContent::Update()
 		if (session == nullptr)
 		{
 			continue;
+		}
+		else
+		{
+			if (session->_invalid)
+			{
+				session->ReleasePost();
+				continue;
+			}
 		}
 
 		unsigned short len;
@@ -312,8 +347,6 @@ void CContent::Update()
 		_server->FreeSession(session);
 	}
 
-	ClearSession();
-
 	DWORD tick = timeGetTime();
 	int deltaTick = tick - _frameTick;
 	if (deltaTick < _frameMs)
@@ -329,8 +362,6 @@ void CContent::Update()
 
 	OnTick(tick - _oldTick);
 	_oldTick = tick;
-
-	ProcessRequest();
 
 	ClearInvalidHandles();
 }

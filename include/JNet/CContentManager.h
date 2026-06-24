@@ -33,6 +33,21 @@ public:
 	FContentNode* Alloc(CContent* inContent);
 	void Free(FContentNode* node);
 
+	template <typename Lambda>
+	bool Execute(FContentHandle handle, Lambda func)
+	{
+		FContentNode* node = GetContent(handle);
+		if (node == nullptr)
+		{
+			return false;
+		}
+
+		func();
+
+		FreeContent(node);
+		return true;
+	}
+
 	template <typename ContentType, typename MemFunc, typename... Args>
 	bool Execute(long statusMask, FContentHandle handle, MemFunc func, Args&&... args)
 	{

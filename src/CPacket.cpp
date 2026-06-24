@@ -4,27 +4,6 @@
 #include <JNet/CPacket.h>
 
 CTlsMemoryPool<CPacket> CPacket::_pool(PoolRegistry::RegisterDebugSign("CPacket"), true);
-CRWLock CPacket::_poolLock;
-
-CPacket& CPacket::operator=(const CPacket& clSrcPacket)
-{
-	_packetBuffer->Release();
-	_packetBuffer = clSrcPacket._packetBuffer;
-	_packetBuffer->AddRef();
-	_endPos = clSrcPacket._endPos;
-	_headPos = clSrcPacket._headPos;
-	return *this;
-}
-
-void CPacket::Clear()
-{
-	_err = Default;
-	_endPos = 0;
-	_headPos = 0;
-	_buffer = nullptr;
-	_hasHeader = false;
-	_encoding = false;
-}
 
 void CPacket::Encode(unsigned char randomKey)
 {
@@ -75,5 +54,5 @@ void CPacket::Commit()
 
 	_hasHeader = true;
 
-	_packetBuffer->SetWritePos(_headPos);
+	((CPacketBuffer*)_buffer)->SetWritePos(_headPos);
 }

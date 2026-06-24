@@ -18,6 +18,7 @@ class CWorkerThread;
 class CAppServer;
 class CContentManager;
 struct FContentNode;
+class CMonitorTable;
 
 class CContent
 {
@@ -33,7 +34,7 @@ public:
 		Closing = 4,
 	};
 
-	CContent(CAppServer* server, int frameMs);
+	CContent(CAppServer* server, int frameMs, bool disconnectOnExit = true);
 	~CContent();
 	virtual void OnRegister() = 0;
 	virtual void OnUnregister() = 0;
@@ -43,7 +44,7 @@ public:
 	virtual void OnLeave(FSessionId sessionId, void*& userData) = 0;
 
 	virtual void OnCollectExternal() = 0;
-	virtual void OnPrintExternal(wchar_t** wstr, size_t* remain) = 0;
+	virtual void OnPrintExternal(CMonitorTable* table) = 0;
 
 	template <typename Lambda>
 	bool RequestExternal(Lambda&& func)
@@ -63,6 +64,8 @@ public:
 
 		return true;
 	}
+
+	void MoveSession(FContentHandle handle);
 
 public:
 	FContentHandle GetHandle();
@@ -87,10 +90,9 @@ private:
 	void Start();
 	void ClearInvalidHandles();
 	void ClearRequest();
-	void ProcessRequest();
+	void ProcessRequestQueue();
 	void ProcessUpdateQueue();
 	void DisconnectSession();
-	void ClearSession();
 	void Reset();
 
 private:
@@ -100,6 +102,7 @@ private:
 	HANDLE _startEvent;
 	HANDLE _endEvent;
 	bool _shutdown;
+	bool _disconnectOnExit;
 	long _registered;
 	unsigned int _frameTick;
 	unsigned int _oldTick;
@@ -109,5 +112,4 @@ private:
 	CLockFreeQueue<FTimerHandle> _timers;
 	CLockFreeQueue<FLambdaTask*> _requestQ;
 	std::unordered_set<FSessionId> _sessions;
-	std::vector<FSessionId> _invalidSessions;
 };

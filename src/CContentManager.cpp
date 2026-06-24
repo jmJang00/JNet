@@ -80,10 +80,19 @@ bool CContentManager::Unregister(FContentHandle handle)
 
 bool CContentManager::MoveTo(FSessionId id, FContentHandle to)
 {
+	// MoveTo는 서버의 네트워크 이벤트, 컨텐츠의 네트워크 이벤트에서만 사용 가능
 	CSession* session = _server->GetSession(id);
 	if (session == nullptr)
 	{
 		return false;
+	}
+	else
+	{
+		if (session->_invalid)
+		{
+			session->ReleasePost();
+			return false;
+		}
 	}
 
 	bool success = true;
@@ -120,28 +129,42 @@ bool CContentManager::MoveTo(FSessionId id, FContentHandle to)
 	if (!success)
 	{
 		_server->FreeSession(session);
+		_server->OnError(ENetError::MOVE_TO_INVALID_CONTENT, "MoveTo(): Invalid content handle");
 		_server->Disconnect(session->_id);
+		return false;
+	}
+
+	if (to.handle == session->_content.handle)
+	{
+		_server->FreeSession(session);
+		FreeContent(nextContentNode);
+		_server->OnError(ENetError::MOVE_TO_INVALID_CONTENT, "MoveTo(): Already assigned content handle");
 		return false;
 	}
 
 	FContentHandle prevContent(0);
 	prevContent.handle = (unsigned long long)InterlockedExchange((uintptr_t*)&session->_content.handle, (uintptr_t)to.handle);
+
 	if (prevContent.handle != FContentHandle::NONE)
 	{
 		// Leave에서 FreeContent를 해주면서 카운트를 내림
-		GetContentUnsafe(prevContent)->content->Leave(session);
-	}
-
-	if (to.handle != FContentHandle::NONE)
-	{
-		// Enter에서 FreeSession을 해줌
-		FSystemMessage msg(ESystemMessageType::MSG_ENTER, session, 0);
-		nextContentNode->content->Enqueue(&msg);
+		//GetContentUnsafe(prevContent)->content->Leave(session);
+		FSystemMessage msg(ESystemMessageType::MSG_LEAVE, session, (uint64_t)nextContentNode);
+		GetContentUnsafe(prevContent)->content->Enqueue(&msg);
 	}
 	else
 	{
-		// 워커스레드로 이동하는 경우
-		_server->FreeSession(session);
+		if (nextContentNode == nullptr)
+		{
+			// 워커스레드로 이동하는 경우
+			_server->FreeSession(session);
+		}
+		else
+		{
+			// Enter에서 FreeSession을 해줌
+			FSystemMessage msg(ESystemMessageType::MSG_ENTER, session, 0);
+			nextContentNode->content->Enqueue(&msg);
+		}
 	}
 
 	return true;

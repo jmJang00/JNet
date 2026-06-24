@@ -48,6 +48,20 @@ public:
 		return *(T*)this;
 	}
 
+	T& operator<<(bool value)
+	{
+		if (_headPos + sizeof(value) > _endPos)
+		{
+			_err = ErrorSerialize;
+			return *(T*)this;
+		}
+
+		*((bool*)(_buffer + _headPos)) = value;
+		_headPos += sizeof(value);
+
+		return *(T*)this;
+	}
+
 	T& operator<<(short value)
 	{
 		if (_headPos + sizeof(value) > _endPos)

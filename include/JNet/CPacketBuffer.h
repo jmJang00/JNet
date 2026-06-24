@@ -30,7 +30,6 @@ public:
 	{
 		if (InterlockedDecrement(&_refCnt) == 0)
 		{
-			Clear();
 			Free(this);
 			return true;
 		}

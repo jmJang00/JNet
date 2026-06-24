@@ -34,7 +34,7 @@ bool CNetClient::Connect(
 
 	do
 	{
-		SLOGA(JNetLog::Progress, L"Start Connect\n");
+		SLOGA(JNetLog::Progress, L"Start Connect");
 
 		SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
 		if (sock == INVALID_SOCKET)
@@ -71,7 +71,6 @@ bool CNetClient::Connect(
 		int actual = 0;
 		socklen_t len = sizeof(actual);
 		getsockopt(sock, SOL_SOCKET, SO_SNDBUF, (char*)&actual, &len);
-		//SLOGA(L"setsockopt SO_SNDBUF = %d\n", actual);
 
 		if (nagle == false)
 		{
@@ -81,7 +80,6 @@ bool CNetClient::Connect(
 
 		LINGER linger = { 1, 0 };
 		setsockopt(sock, SOL_SOCKET, SO_LINGER, (char*)&linger, sizeof(linger));
-		//SLOGA(L"setsockopt SO_LINGER = (%d, %d)\n", linger.l_linger, linger.l_onoff);
 
 		addrinfo hints{};
 		hints.ai_family = AF_INET;
