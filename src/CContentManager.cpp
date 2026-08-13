@@ -137,7 +137,10 @@ bool CContentManager::MoveTo(FSessionId id, FContentHandle to)
 	if (to.handle == session->_content.handle)
 	{
 		_server->FreeSession(session);
-		FreeContent(nextContentNode);
+		if (nextContentNode != nullptr)
+		{
+			FreeContent(nextContentNode);
+		}
 		_server->OnError(ENetError::MOVE_TO_INVALID_CONTENT, "MoveTo(): Already assigned content handle");
 		return false;
 	}

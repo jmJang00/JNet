@@ -26,6 +26,7 @@ struct FServerConfig
 struct ServerMetrics
 {
 	int acceptTPS = 0;
+	float acceptUsage = 0;
 	int recvMessageTPS = 0;
 	int sendMessageTPS = 0;
 	int disconnectCnt = 0;
@@ -47,6 +48,7 @@ class CNetServer : public INetworkEntity
 public:
 	friend class CMonitorThread;
 	friend class CSession;
+
 	CNetServer(int concurrentThreadCnt, int totalThreadCnt, int maxSession);
 	virtual ~CNetServer();
 	
@@ -66,6 +68,7 @@ public:
 	virtual void OnPrintExternal(CMonitorTable* table);
 	virtual void OnCollectExternal(MetricsCollector& collector);
 
+	void AddWorkerObserver(IWorkerObserver* obs);
 	CLambdaPipe* GetServerContext();
 	CSession* CreateSession(SOCKET sock) override;
 	bool ReleaseSession(CSession* session) override;
@@ -86,6 +89,8 @@ public:
 	virtual void RefreshStatistics() { if (_worker) { _worker->RefreshStatistics(); } }
 
 	long GetDisconnectCount() { return _disconnectTotal; }
+
+	void* GetUserData(FSessionId id);
 
 	CSession* GetSession(FSessionId id)
 	{
@@ -123,6 +128,7 @@ protected:
 	CLockFreeStack<int> _sessionIndexStack;
 	std::vector<CSession> _sessions;
 	std::vector<IWorkerObserver*> _workerObservers;
+	unsigned int _prevTime;
 
 private:
 	void AcceptThread();

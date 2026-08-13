@@ -3,7 +3,7 @@
 #include <memory.h>
 #include <JNet/CPacket.h>
 
-CTlsMemoryPool<CPacket> CPacket::_pool(PoolRegistry::RegisterDebugSign("CPacket"), true);
+CTlsMemoryPool<CPacket> CPacket::_pool("CPacket", true);
 
 void CPacket::Encode(unsigned char randomKey)
 {

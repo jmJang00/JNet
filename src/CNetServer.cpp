@@ -2,8 +2,9 @@
 #include <cstdio>
 #include <atomic>
 #include <JCore/SLog.h>
-#include <JCore/Profiler.h>
 #include <JCore/CTlsMemoryPool.h>
+#include <JCore/Profiler.h>
+#include <JNet/NetworkProfile.h>
 #include <JNet/CNetServer.h>
 #include <JNet/CNetClient.h>
 #include <JNet/CSession.h>
@@ -25,6 +26,7 @@ CNetServer::CNetServer(int concurrentThreadCnt, int totalThreadCnt, int maxSessi
 	, _nextId(1)
 	, _sessionCnt(0)
 	, _sessionIndexStack(maxSession)
+	, _prevTime(0)
 {
 	_worker = new CWorkerThread(totalThreadCnt, concurrentThreadCnt);
 
@@ -36,9 +38,57 @@ CNetServer::CNetServer(int concurrentThreadCnt, int totalThreadCnt, int maxSessi
 		_sessionIndexStack.push(i);
 	}
 
-	_serverContext = new CLambdaPipe(_worker, 3000);
+	_serverContext = new CLambdaPipe(_worker, 1000);
 
 	_serverMetrics = new ServerMetrics();
+
+	class CNetWorkerObserver : public IWorkerObserver
+	{
+	public:
+		CNetWorkerObserver()
+			: _lastFlushTime(GetTickCount64())
+		{
+		}
+
+		~CNetWorkerObserver() override
+		{
+
+		}
+
+		IWorkerObserver* Clone() const
+		{
+			return new CNetWorkerObserver();
+		}
+
+		void OnWorkerEnter()
+		{
+			CProfiler::Register(NET_PROFILE_ACCEPT, L"Network", L"Accept", 1);
+			CProfiler::Register(NET_PROFILE_SEND, L"Network", L"Send", 0.2);
+			CProfiler::Register(NET_PROFILE_SEND_START, L"Network", L"SendStart", 0.2);
+			CProfiler::Register(NET_PROFILE_RELEASE, L"Network", L"Release", 1);
+			CProfiler::Register(NET_PROFILE_RECV, L"Network", L"Recv", 0.2);
+			CProfiler::Register(NET_PROFILE_IO_COMPLETE, L"Network", L"IOComplete", 0.2);
+			CProfiler::Register(NET_PROFILE_JOB, L"Network", L"Job", 0.2);
+			CProfiler::Register(NET_PROFILE_PIPE, L"Network", L"Pipe", 0.2);
+			CProfiler::Register(NET_PROFILE_CONTENT, L"Network", L"Content", 0.2);
+			CProfiler::Register(NET_PROFILE_SEND_PACKET, L"Network", L"SendPacket", 0.2);
+		}
+
+		void OnWorkerEnd()
+		{
+			uint64_t now = GetTickCount64();
+
+			if (now - _lastFlushTime >= 60000)
+			{
+				_lastFlushTime = now;
+				CProfiler::Flush();
+			}
+		}
+
+		uint64_t _lastFlushTime;
+	};
+
+	AddWorkerObserver(new CNetWorkerObserver());
 }
 
 CNetServer::~CNetServer()
@@ -60,6 +110,13 @@ CNetServer::~CNetServer()
 		int arg;
 		_sessionIndexStack.pop(&arg);
 	}
+
+	for (auto obs : _workerObservers)
+	{
+		delete obs;
+	}
+
+	_workerObservers.clear();
 
 	_sessions.clear();
 	delete _serverContext;
@@ -226,6 +283,7 @@ bool CNetServer::Disconnect(FSessionId sessionId)
 
 bool CNetServer::SendPacket(FSessionId sessionId, CPacketBuffer* message)
 {
+	SMPL_PROFILER(NET_PROFILE_SEND_PACKET);
 	if (sessionId.internal.idx >= (unsigned int)_maxSession)
 	{
 		return false;
@@ -258,7 +316,7 @@ bool CNetServer::SendPacket(FSessionId sessionId, CPacketBuffer* message)
 
 	if (InterlockedExchange8(&session->_sending, 1) == 0)
 	{
-		PostQueuedCompletionStatus(_worker->_hIOCP, 0, (ULONG_PTR)session, (LPOVERLAPPED)CWorkerThread::SEND_START);
+		_worker->PostStatus((ULONG_PTR)session, CWorkerThread::sSendStartOverlapped, 0);
 	}
 	else
 	{
@@ -286,7 +344,7 @@ bool CNetServer::SendPacketUnsafe(FSessionId sessionId, CPacketBuffer* message)
 	if (InterlockedExchange8(&session->_sending, 1) == 0)
 	{
 		session->AddRef();
-		PostQueuedCompletionStatus(_worker->_hIOCP, 0, (ULONG_PTR)session, (LPOVERLAPPED)CWorkerThread::SEND_START);
+		_worker->PostStatus((ULONG_PTR)session, CWorkerThread::sSendStartOverlapped, 0);
 	}
 
 	return true;
@@ -318,6 +376,11 @@ void CNetServer::OnCollectExternal(MetricsCollector& collector)
 	_serverMetrics->sendMessageTPS = GetSendMessageTPS();
 	_serverMetrics->sessionCnt = GetSessionCount();
 
+	unsigned int currTime = timeGetTime();
+	unsigned int diff = currTime - _prevTime;
+	_prevTime = currTime;
+	Context* ctxt = (*_acceptor->GetContextBufferPtr());
+	_serverMetrics->acceptUsage = (double)ctxt->GetMeasuredTime() / diff * 100;
 	_worker->OnCollectExternal(collector);
 }
 
@@ -345,7 +408,15 @@ void CNetServer::OnPrintExternal(CMonitorTable* table)
 	table->PrintColumnFormat(2, L"%d", metrics->disconnectCnt);
 
 	table->PrintDivider();
+	table->PrintColumnFormat(1, L"[%u]", (*_acceptor->GetContextBufferPtr())->_threadId);
+	table->PrintColumnFormat(1, L"%.2lf", _serverMetrics->acceptUsage);
+	table->PrintDivider();
 	_worker->OnPrintExternal(table);
+}
+
+void CNetServer::AddWorkerObserver(IWorkerObserver* obs)
+{
+	_workerObservers.push_back(obs);
 }
 
 CLambdaPipe* CNetServer::GetServerContext()
@@ -409,13 +480,31 @@ bool CNetServer::ReleaseSession(CSession* session)
 	return true;
 }
 
+void* CNetServer::GetUserData(FSessionId id)
+{
+	CSession* session = GetSession(id);
+	void* userData = session->_userData;
+	FreeSession(session);
+	return userData;
+}
+
 void CNetServer::AcceptThread()
 {
-	SLOGA(JNetLog::Progress, L"Accept Thread Start");
+	SLOGA(JNetLog::Progress, L"Accept Thread Start %lu", GetCurrentThreadId());
+	for (auto obs : _workerObservers)
+	{
+		obs->OnWorkerEnter();
+	}
 
 	while (1)
 	{
+		SMPL_PRO_END(ENetworkProfile::NET_PROFILE_ACCEPT);
+		for (auto obs : _workerObservers)
+		{
+			obs->OnWorkerEnd();
+		}
 		SOCKET clientSock = accept(_listenSock, NULL, NULL);
+		SMPL_PRO_BEGIN(ENetworkProfile::NET_PROFILE_ACCEPT);
 		if (clientSock == INVALID_SOCKET)
 		{
 			int errCode = WSAGetLastError();
@@ -457,5 +546,9 @@ void CNetServer::AcceptThread()
 		}
 	}
 
-	SLOGA(JNetLog::Progress, L"Accept Thread Exit");
+	for (auto obs : _workerObservers)
+	{
+		obs->OnWorkerExit();
+	}
+	SLOGA(JNetLog::Progress, L"Accept Thread Exit %lu", GetCurrentThreadId());
 }

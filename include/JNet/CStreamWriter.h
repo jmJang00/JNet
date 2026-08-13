@@ -1,4 +1,7 @@
 #pragma once
+#include <JNet/FBufferView.h>
+#include <type_traits>
+#include <string_view>
 
 template <typename T>
 class CStreamWriter
@@ -230,6 +233,52 @@ public:
 		return *(T*)this;
 	}
 
+	template <typename U>
+	T& operator<<(FBufferView<U>& test);
+
+	T& operator<<(FBufferView<wchar_t>& test)
+	{
+		unsigned short size = test.size * 2;
+		*this << size;
+		if (_err != Default)
+		{
+			return *(T*)this;
+		}
+
+		int bytes = size;
+		if (_headPos + bytes > _endPos)
+		{
+			_err = ErrorSerialize;
+			return *(T*)this;
+		}
+
+		memcpy(_buffer + _headPos, test.data, bytes);
+		_headPos += bytes;
+
+		return *(T*)this;
+	}
+
+	T& operator<<(std::wstring_view test)
+	{
+		unsigned short bytes = (unsigned short)(test.size() * sizeof(wchar_t));
+		*this << bytes;
+		if (_err != Default)
+		{
+			return *(T*)this;
+		}
+
+		if (_headPos + bytes > _endPos)
+		{
+			_err = ErrorSerialize;
+			return *(T*)this;
+		}
+
+		memcpy(_buffer + _headPos, test.data(), bytes);
+		_headPos += bytes;
+
+		return *(T*)this;
+	}
+
 	int PutData(const char* src, int size)
 	{
 		if (_headPos + size > _endPos)
@@ -249,3 +298,29 @@ protected:
 	unsigned short _endPos;
 	int _err;
 };
+
+template <typename T>
+template <typename U>
+T& CStreamWriter<T>::operator<<(FBufferView<U>& test)
+{
+	static_assert(std::is_fundamental_v<U>, "U must be a fundamental type.");
+
+	unsigned short size = test.size;
+	*this << size;
+	if (_err != Default)
+	{
+		return *(T*)this;
+	}
+
+	int bytes = (int)(size * sizeof(U));
+	if (_headPos + bytes > _endPos)
+	{
+		_err = ErrorSerialize;
+		return *(T*)this;
+	}
+
+	memcpy(_buffer + _headPos, test.data, bytes);
+	_headPos += bytes;
+
+	return *(T*)this;
+}

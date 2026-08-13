@@ -160,6 +160,7 @@
     <ClInclude Include="include\JNet\FContentHandle.h" />
     <ClInclude Include="include\JNet\INetworkEntity.h" />
     <ClInclude Include="include\JNet\Initialize.h" />
+    <ClInclude Include="include\JNet\NetworkProfile.h" />
     <ClInclude Include="include\JNet\PacketHeader.h" />
     <ClInclude Include="include\JNet\CPacketBuffer.h" />
     <ClInclude Include="include\JNet\CPacket.h" />

@@ -2,22 +2,18 @@
 #include <atomic>
 #include <vector>
 #include <JCore/CThread.h>
+#include <JCore/IWorkerObserver.h>
 #include <JNet/Types.h>
 #include <JNet/CMonitorThread.h>
+#include <JNet/CLambdaPipe.h>
 
 class CSession;
 class INetworkEntity;
+struct FOverlappedEx;
 
 struct WorkerMetrics
 {
 	double cpuUsage = 0;
-};
-
-class IWorkerObserver
-{
-public:
-	virtual void OnWorkerStart() = 0;
-	virtual ~IWorkerObserver() = default;
 };
 
 class CWorkerThread : public CThread
@@ -25,10 +21,13 @@ class CWorkerThread : public CThread
 public:
 	enum
 	{
-		SEND_START = 0xfff1,
-		RELEASE_SESSION = 0xfff2,
-		POST_MESSAGE = 0xfff3,
-		POST_CONTENT = 0xfff4,
+		SEND_START,
+		RELEASE_SESSION,
+		JOB_POST,
+		PIPE_POST,
+		CONTENT_POST,
+		SEND_POST,
+		RECV_POST,
 	};
 
 	static const int ASSEMBLE_LIMIT = 5;
@@ -45,7 +44,14 @@ public:
 
 	void Shutdown();
 
-	bool PostStatus(uintptr_t compKey, OVERLAPPED* ov, unsigned int transferred = 0);
+	template <typename Lambda>
+	bool PostJob(Lambda&& func)
+	{
+		FLambdaTask* task = FLambdaTask::CreateTask<Lambda>(std::forward<Lambda>(func));
+		return PostStatus((uintptr_t)task, sPostJobOverlapped);
+	}
+
+	bool PostStatus(uintptr_t compKey, FOverlappedEx* ov, unsigned int transferred = 0);
 
 	bool Register(CSession* session, SOCKET sock);
 
@@ -86,4 +92,11 @@ public:
 	long _recvMessageCnt;
 	long _sendMessageCnt;
 	long _chatResCnt;
+
+public:
+	static FOverlappedEx* sSendStartOverlapped;
+	static FOverlappedEx* sReleaseSessionOverlapped;
+	static FOverlappedEx* sPostMessageOverlapped;
+	static FOverlappedEx* sPostContentOverlapped;
+	static FOverlappedEx* sPostJobOverlapped;
 };

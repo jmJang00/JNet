@@ -1,0 +1,21 @@
+#pragma once
+#include <stdint.h>
+// NetworkProfiler.h
+
+enum ENetworkProfile : uint32_t
+{
+    NET_PROFILE_ACCEPT,
+    NET_PROFILE_SEND,
+    NET_PROFILE_SEND_START,
+    NET_PROFILE_RELEASE,
+    NET_PROFILE_RECV,
+    NET_PROFILE_IO_COMPLETE,
+    NET_PROFILE_JOB,
+    NET_PROFILE_PIPE,
+    NET_PROFILE_CONTENT,
+    NET_PROFILE_SEND_PACKET,
+
+    NET_PROFILE_COUNT
+};
+
+constexpr uint32_t NET_PROFILE_USER_BASE = NET_PROFILE_COUNT;

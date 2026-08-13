@@ -1,5 +1,6 @@
 #include "pch.h"
 #include <JNet/CLambdaPipe.h>
+#include <JNet/CWorkerThread.h>
 #include <JCore/SLog.h>
 #include "LogTag.h"
 
@@ -29,7 +30,7 @@ bool CLambdaPipe::PostTask(FLambdaTask* task)
 
 	if (InterlockedExchange8(&_processing, 1) == 0)
 	{
-		_context->PostStatus((uintptr_t)this, (OVERLAPPED*)CWorkerThread::POST_MESSAGE);
+		_context->PostStatus((uintptr_t)this, CWorkerThread::sPostMessageOverlapped);
 	}
 
 	return true;
@@ -120,7 +121,7 @@ void CLambdaPipe::Execute()
 	{
 		if (InterlockedExchange8(&_processing, 1) == 0)
 		{
-			_context->PostStatus((uintptr_t)this, (OVERLAPPED*)CWorkerThread::POST_MESSAGE);
+			_context->PostStatus((uintptr_t)this, CWorkerThread::sPostMessageOverlapped);
 		}
 	}
 }

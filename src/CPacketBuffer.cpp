@@ -1,7 +1,7 @@
 #include "pch.h"
 #include <JNet/CPacketBuffer.h>
 
-CTlsMemoryPool<CPacketBuffer> CPacketBuffer::_pool(PoolRegistry::RegisterDebugSign("CPacketBuffer"), false);
+CTlsMemoryPool<CPacketBuffer> CPacketBuffer::_pool("CPacketBuffer", false);
 
 CPacketBuffer::CPacketBuffer()
 	: _refCnt(0)

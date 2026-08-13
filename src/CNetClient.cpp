@@ -1,6 +1,8 @@
 #include "pch.h"
 #include <JCore/CThread.h>
 #include <JCore/SLog.h>
+#include <JCore/Profiler.h>
+#include <JNet/NetworkProfile.h>
 #include <JNet/CNetClient.h>
 #include <JNet/CSession.h>
 #include <JNet/CPacket.h>
@@ -220,6 +222,7 @@ bool CNetClient::Disconnect(FSessionId sessionId)
 
 bool CNetClient::SendPacket(CPacketBuffer* packet)
 {
+	SMPL_PROFILER(NET_PROFILE_SEND_PACKET);
 	if (!_session->AddRef())
 	{
 		_session->ReleasePost();
@@ -245,7 +248,7 @@ bool CNetClient::SendPacket(CPacketBuffer* packet)
 
 	if (InterlockedExchange8(&_session->_sending, 1) == 0)
 	{
-		_worker->PostStatus((ULONG_PTR)_session, (LPOVERLAPPED)CWorkerThread::SEND_START);
+		_worker->PostStatus((ULONG_PTR)_session, CWorkerThread::sSendStartOverlapped);
 	}
 	else
 	{

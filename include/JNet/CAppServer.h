@@ -7,7 +7,7 @@ class CContentManager;
 class CAppServer : public CNetServer
 {
 public:
-	CAppServer(int concurrentThreadCnt, int totalThreadCnt, int maxSession = 10000);
+	CAppServer(int concurrentThreadCnt, int totalThreadCnt, int timerThreadCnt, int maxSession = 10000);
 	~CAppServer();
 	bool Start(const char* ip, const char* port, bool nagle = true, 
 			bool encoding = false, bool sendBufZero = true);

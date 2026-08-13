@@ -68,6 +68,8 @@ void CSession::Start(SOCKET socket, CWorkerThread* iocpWorker, INetworkEntity* s
 	_address->port = ntohs(clientAddr.sin_port);
 	memset(_sendOverlapped, 0, sizeof(*_sendOverlapped));
 	memset(_recvOverlapped, 0, sizeof(*_recvOverlapped));
+	_sendOverlapped->type = CWorkerThread::SEND_POST;
+	_recvOverlapped->type = CWorkerThread::RECV_POST;
 	_userData = nullptr;
 	_assembleCnt = 0;
 	InterlockedExchange((uintptr_t*)&_content, (uintptr_t)nullptr);
@@ -319,7 +321,7 @@ bool CSession::ReleasePost()
 	{
 		if (InterlockedCompareExchange(&_refCnt, 0, 0x80000000) == 0x80000000)
 		{
-			_worker->PostStatus((ULONG_PTR)this, (LPOVERLAPPED)CWorkerThread::RELEASE_SESSION, 0);
+			_worker->PostStatus((ULONG_PTR)this, CWorkerThread::sReleaseSessionOverlapped, 0);
 			return true;
 		}
 	}

@@ -15,6 +15,7 @@ class CWorkerThread;
 struct FOverlappedEx
 {
 	OVERLAPPED overlapped;
+	unsigned short type;
 	unsigned int reqLen;
 	unsigned int bufCnt;
 };

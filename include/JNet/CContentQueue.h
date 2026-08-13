@@ -33,7 +33,7 @@ public:
 
 		if (InterlockedExchange8(&_processing, 1) == 0)
 		{
-			_context->PostStatus((uintptr_t)this, (OVERLAPPED*)CWorkerThread::POST_CONTENT);
+			_context->PostStatus((uintptr_t)this, CWorkerThread::sPostContentOverlapped);
 		}
 	}
 
@@ -59,7 +59,7 @@ public:
 		{
 			if (InterlockedExchange8(&_processing, 1) == 0)
 			{
-				_context->PostStatus((uintptr_t)this, (OVERLAPPED*)CWorkerThread::POST_CONTENT);
+				_context->PostStatus((uintptr_t)this, CWorkerThread::sPostContentOverlapped);
 			}
 		}
 	}

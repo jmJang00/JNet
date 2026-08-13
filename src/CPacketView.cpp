@@ -4,7 +4,9 @@
 #include <JNet/CPacketView.h>
 #include <JNet/CPacket.h>
 
-CTlsMemoryPool<CPacketView> CPacketView::_pool(PoolRegistry::RegisterDebugSign("CPacketView"), true);
+
+
+CTlsMemoryPool<CPacketView> CPacketView::_pool("CPacketView", true);
 
 bool CPacketView::Decode(unsigned char randomKey)
 {

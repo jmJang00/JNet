@@ -1,14 +1,11 @@
 #pragma once
-
 #include <stdint.h>
-#include <JNet/CPacket.h>
-#include <JNet/CPacketView.h>
 
 template<typename T>
 struct FBufferView
 {
-    const T* data;
-    int size;
+    T* data;
+    unsigned short size;
 
     FBufferView()
         : data(nullptr)
@@ -16,7 +13,7 @@ struct FBufferView
     {
     }
 
-    FBufferView(const T* data, int size)
+    FBufferView(T* data, int size)
         : data(data)
         , size(size)
     {
@@ -57,19 +54,3 @@ struct FBufferView
         return size == 0;
     }
 };
-
-template <typename T>
-CPacket& operator<<(CPacket& pkt, FBufferView<T>& test)
-{
-    pkt << test.size;
-	pkt.PutData((char*)test.Begin(), test.ByteSize());
-    return pkt;
-}
-
-template <typename T>
-CPacketView& operator>>(CPacketView& pkt, FBufferView<T>& test)
-{
-    pkt >> test.size;
-    test.data = pkt.GetBufferPtr() + pkt.GetReadPos();
-    return pkt;
-}

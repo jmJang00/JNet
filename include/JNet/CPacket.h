@@ -108,6 +108,7 @@ public:
 	static int GetAllocCount() { return _pool.GetAllocCount(); }
 
 	void Encode(unsigned char randomKey);
+	bool Encoding() { return _encoding; }
 	void Commit();
 
 protected:

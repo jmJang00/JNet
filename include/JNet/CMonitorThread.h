@@ -11,6 +11,8 @@ class CNetServer;
 class MetricsCollector
 {
 public:
+	static constexpr size_t AssembleBufferSize = 256;
+
 	MetricsCollector(std::vector<INetworkEntity*>& servers, const wchar_t* projectName);
 	void Collect();
 
@@ -58,7 +60,8 @@ private:
 class CMonitorThread : public CThread
 {
 public:
-	inline static constexpr int MONITOR_BUFFER_SIZE = 6000;
+	static constexpr int MONITOR_BUFFER_SIZE = 6000;
+	static constexpr size_t MaxFileNameLength = 256;
 
 	CMonitorThread(const wchar_t* projectName, std::vector<INetworkEntity*>& servers);
 

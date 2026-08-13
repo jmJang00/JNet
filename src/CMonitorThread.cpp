@@ -7,7 +7,6 @@
 #include <JNet/CNetServer.h>
 #include <JNet/CMonitorThread.h>
 #include "LogTag.h"
-#include <JCore/CommonDefs.h>
 
 MetricsCollector::MetricsCollector(std::vector<INetworkEntity*>& servers, const wchar_t* projectName)
 {
@@ -16,7 +15,7 @@ MetricsCollector::MetricsCollector(std::vector<INetworkEntity*>& servers, const 
     GetSystemInfo(&si);
     numOfCore = si.dwNumberOfProcessors;
 
-    wchar_t assembleBuffer[ProjectConfig::AssembleBufferSize];
+    wchar_t assembleBuffer[AssembleBufferSize];
     wchar_t* buffer = assembleBuffer;
     buffer[0] = L'\0';
     size_t remaining = sizeof(assembleBuffer);
@@ -164,7 +163,7 @@ CMonitorThread::CMonitorThread(const wchar_t* projectName, std::vector<INetworkE
     _projectName = projectName;
     if (!Create(true))
     {
-        ELOG(JNetLog::Network, L"Failed to create monitor thread");
+        ELOG(JNetLog::Progress, L"Failed to create monitor thread");
         CRASH(true);
     }
 }
@@ -176,7 +175,7 @@ CMonitorThread::CMonitorThread(const wchar_t* projectName, INetworkEntity* serve
     _projectName = projectName;
     if (!Create(true))
     {
-        ELOG(JNetLog::Network, L"Failed to create monitor thread");
+        ELOG(JNetLog::Progress, L"Failed to create monitor thread");
         CRASH(true);
     }
 }
@@ -298,16 +297,16 @@ bool CMonitorThread::_printMonitor = false;
 void CMonitorThread::MonitorThread()
 {
     Context* ctxt = CThread::GetContextPtr();
-    SLOGA(JNetLog::Network, L"Monitor Thread Start");
+    SLOGA(JNetLog::Progress, L"Monitor Thread Start %lu", GetCurrentThreadId());
 
     MetricsCollector collector(_entities, _projectName);
 
     struct tm localTime;
     localtime_s(&localTime, &collector.recordTime);
 
-    wchar_t* filePath = new wchar_t[ProjectConfig::MaxFileNameLength];
+    wchar_t* filePath = new wchar_t[MaxFileNameLength];
     wchar_t* filePtr = filePath;
-    size_t remaining = ProjectConfig::MaxFileNameLength;
+    size_t remaining = MaxFileNameLength;
 
     APPEND_FORMAT(filePtr, remaining, L"Log\\%04d%02d_%s.txt", localTime.tm_year + 1900, localTime.tm_mon + 1, L"Monitor");
 
@@ -411,12 +410,12 @@ void CMonitorThread::MonitorThread()
         counter++;
         if (counter % 180 == 0)
         {
-            Logger::WriteLogFile(filePath, table->Content(), MONITOR_BUFFER_SIZE - (int)remaining);
+            CLogger::WriteLogFile(filePath, table->Content(), MONITOR_BUFFER_SIZE - (int)remaining);
         }
         printf("\n\n%ls", table->Content());
     }
 
     delete[] filePath;
-    SLOGA(JNetLog::Network, L"Monitor Thread Exit");
+    SLOGA(JNetLog::Progress, L"Monitor Thread Exit %lu", GetCurrentThreadId());
 }
 

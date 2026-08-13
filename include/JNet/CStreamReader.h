@@ -1,4 +1,7 @@
 #pragma once
+#include <JNet/FBufferView.h>
+#include <type_traits>
+#include <string_view>
 
 template <typename T>
 class CStreamReader
@@ -21,6 +24,7 @@ public:
 	}
 
 	int GetLastError() { return _err; }
+	void SetLastError(int error) { _err = error; }
 
 	T& operator>>(char& value)
 	{
@@ -176,6 +180,97 @@ public:
 		return *(T*)this;
 	}
 
+	T& operator>>(std::wstring& value)
+	{
+		unsigned short size;
+		*this >> size;
+		if (_err != Default)
+		{
+			return *(T*)this;
+		}
+
+		int bytes = (int)(size * sizeof(char));
+		if (_headPos + bytes > _endPos)
+		{
+			_err = ErrorSerialize;
+			return *(T*)this;
+		}
+
+		value.assign((wchar_t*)(_buffer + _headPos), size);
+		_headPos += bytes;
+
+		return *(T*)this;
+	}
+
+	T& operator>>(std::string& value)
+	{
+		unsigned short size;
+		*this >> size;
+		if (_err != Default)
+		{
+			return *(T*)this;
+		}
+
+		int bytes = (int)(size * sizeof(char));
+		if (_headPos + bytes > _endPos)
+		{
+			_err = ErrorSerialize;
+			return *(T*)this;
+		}
+
+		value.assign((char*)(_buffer + _headPos), size);
+		_headPos += bytes;
+
+		return *(T*)this;
+	}
+
+	template <typename U>
+	T& operator>>(FBufferView<U>& test);
+
+	T& operator>>(FBufferView<wchar_t>& test)
+	{
+		*this >> test.size;
+
+		if (_err != Default)
+			return *(T*)this;
+
+		int bytes = test.size;
+		test.size /= 2;
+
+		if (_headPos + bytes <= _endPos)
+		{
+			test.data = (wchar_t*)(_buffer + _headPos);
+			_headPos += bytes;
+		}
+		else
+		{
+			_err = ErrorDeserialize;
+		}
+
+		return *(T*)this;
+	}
+
+	T& operator>>(std::wstring_view& test)
+	{
+		unsigned short bytes = 0;
+		*this >> bytes;
+
+		if (_err != Default)
+			return *(T*)this;
+
+		if (_headPos + bytes <= _endPos)
+		{
+			test = std::wstring_view((wchar_t*)(_buffer + _headPos), bytes / 2);
+			_headPos += bytes;
+		}
+		else
+		{
+			_err = ErrorDeserialize;
+		}
+
+		return *(T*)this;
+	}
+
 	int GetData(char* dest, int size)
 	{
 		if (_headPos + size > _endPos)
@@ -195,3 +290,30 @@ protected:
 	unsigned short _endPos;
 	int _err;
 };
+
+template <typename T>
+template <typename U>
+T& CStreamReader<T>::operator>>(FBufferView<U>& test)
+{
+	static_assert(std::is_fundamental_v<U>, "U must be a fundamental type.");
+
+	*this >> test.size;
+	if (_err != Default)
+	{
+		return *(T*)this;
+	}
+
+	int bytes = sizeof(U) * test.size;
+	if (_headPos + bytes <= _endPos)
+	{
+		test.data = (U*)(_buffer + _headPos);
+		_headPos += bytes;
+	}
+	else
+	{
+		_err = ErrorDeserialize;
+	}
+
+	return *(T*)this;
+}
+

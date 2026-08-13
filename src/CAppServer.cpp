@@ -5,11 +5,11 @@
 #include <JNet/CContentManager.h>
 #include "LogTag.h"
 
-CAppServer::CAppServer(int concurrentThreadCnt, int totalThreadCnt, int maxSession)
+CAppServer::CAppServer(int concurrentThreadCnt, int totalThreadCnt, int timerThreadCnt, int maxSession)
 	: CNetServer(concurrentThreadCnt, totalThreadCnt, maxSession)
 {
-	_timerMng = new CTimerManager(this, 20000, 3);
-	_contentMng = new CContentManager(this, 1000);
+	_timerMng = new CTimerManager(this, 20000, timerThreadCnt);
+	_contentMng = new CContentManager(this, 3000);
 }
 
 CAppServer::~CAppServer()

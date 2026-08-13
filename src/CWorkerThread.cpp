@@ -1,4 +1,6 @@
 #include "pch.h"
+#include <JCore/Profiler.h>
+#include <JNet/NetworkProfile.h>
 #include <JNet/PacketHeader.h>
 #include <JNet/CWorkerThread.h>
 #include <JNet/CSession.h>
@@ -10,6 +12,12 @@
 #include <JNet/CContentQueue.h>
 #include <JNet/CPacketView.h>
 #include "LogTag.h"
+
+FOverlappedEx* CWorkerThread::sSendStartOverlapped;
+FOverlappedEx* CWorkerThread::sReleaseSessionOverlapped;
+FOverlappedEx* CWorkerThread::sPostMessageOverlapped;
+FOverlappedEx* CWorkerThread::sPostContentOverlapped;
+FOverlappedEx* CWorkerThread::sPostJobOverlapped;
 
 CWorkerThread::CWorkerThread(int threadCnt, int concurrentThreadCnt)
 	: CThread([this]() { WorkerThread(); }, threadCnt)
@@ -25,13 +33,7 @@ CWorkerThread::CWorkerThread(int threadCnt, int concurrentThreadCnt)
 	_hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, concurrentThreadCnt);
 	if (_hIOCP == NULL)
 	{
-		ELOG(JNetLog::Network, L"CreateIoCompletionPort failed, [ErrorCode]:%d", GetLastError());
-		CRASH(true);
-	}
-
-	if (!Create(true))
-	{
-		ELOG(JNetLog::Network, L"can't create WorkerThread, [ErrorCode]:%d", GetLastError());
+		ELOG(JNetLog::Progress, L"CreateIoCompletionPort failed, [ErrorCode]:%d", GetLastError());
 		CRASH(true);
 	}
 
@@ -43,19 +45,35 @@ CWorkerThread::~CWorkerThread()
 {
 	CloseHandle(_hIOCP);
 	_workerMetrics.clear();
+	for (auto obs : _workerObservers)
+	{
+		delete obs;
+	}
+	_workerObservers.clear();
 }
 
 void CWorkerThread::Start(const std::vector<IWorkerObserver*>& observers)
 { 
-	_workerObservers = observers;
-	Resume();
+	for (int i = 0; i < observers.size(); i++)
+	{
+		_workerObservers.push_back(observers[i]->Clone());
+	}
+	if (!Create())
+	{
+		ELOG(JNetLog::Progress, L"can't create WorkerThread, [ErrorCode]:%d", GetLastError());
+		CRASH(true);
+	}
 	_isRunning.store(true);
 }
 
 void CWorkerThread::Start()
 {
 	_workerObservers.clear();
-	Resume();
+	if (!Create())
+	{
+		ELOG(JNetLog::Progress, L"can't create WorkerThread, [ErrorCode]:%d", GetLastError());
+		CRASH(true);
+	}
 	_isRunning.store(true);
 }
 
@@ -73,16 +91,16 @@ void CWorkerThread::Shutdown()
 	PostQueuedCompletionStatus(_hIOCP, 0, 0, nullptr);
 }
 
-bool CWorkerThread::PostStatus(uintptr_t compKey, OVERLAPPED* ov, unsigned int transferred)
+bool CWorkerThread::PostStatus(uintptr_t compKey, FOverlappedEx* ov, unsigned int transferred)
 {
-	return PostQueuedCompletionStatus(_hIOCP, transferred, compKey, ov);
+	return PostQueuedCompletionStatus(_hIOCP, transferred, compKey, (LPOVERLAPPED)ov);
 }
 
 bool CWorkerThread::Register(CSession* session, SOCKET sock)
 {
 	if (CreateIoCompletionPort((HANDLE)sock, _hIOCP, (ULONG_PTR)session, 0) == NULL)
 	{
-		ELOGA(JNetLog::Network, L"CreateIoCompletionPort failed, [ErrCode]:%d", GetLastError());
+		ELOGA(JNetLog::Progress, L"CreateIoCompletionPort failed, [ErrCode]:%d", GetLastError());
 		return false;
 	}
 
@@ -328,11 +346,11 @@ void CWorkerThread::OnCollectExternal(MetricsCollector& collector)
 
 void CWorkerThread::WorkerThread()
 {
-	SLOGA(JNetLog::Network, L"Worker Thread Start");
+	SLOGA(JNetLog::Progress, L"Worker Thread Start %ul", GetCurrentThreadId());
 	Context* ctxt = GetContextPtr();
 	for (int i = 0; i < _workerObservers.size(); i++)
 	{
-		_workerObservers[i]->OnWorkerStart();
+		_workerObservers[i]->OnWorkerEnter();
 	}
 
 	while (1)
@@ -342,23 +360,33 @@ void CWorkerThread::WorkerThread()
 		FOverlappedEx* overlapped = nullptr;
 		DWORD transferred = 0;
 		ULONG_PTR compKey = 0;
-		unsigned int requested = 0;
 
-		ctxt->TimeMeasureEnd();
-		GetQueuedCompletionStatus(_hIOCP, &transferred, &compKey, (OVERLAPPED**)&overlapped, INFINITE);
-		ctxt->TimeMeasureBegin();
-
-		if (overlapped == nullptr && compKey == 0 && transferred == 0)
+		SMPL_PRO_END(ENetworkProfile::NET_PROFILE_IO_COMPLETE);
+		for (int i = 0; i < _workerObservers.size(); i++)
 		{
-			SLOGA(JNetLog::Network, L"# 종료 메시지 수신");
+			_workerObservers[i]->OnWorkerEnd();
+		}
+		ctxt->TimeMeasureEnd();
+		bool result = GetQueuedCompletionStatus(_hIOCP, &transferred, &compKey, (OVERLAPPED**)&overlapped, 30'000);
+		ctxt->TimeMeasureBegin();
+		SMPL_PRO_BEGIN(ENetworkProfile::NET_PROFILE_IO_COMPLETE);
+
+		if (result && overlapped == nullptr && compKey == 0 && transferred == 0)
+		{
+			SLOGA(JNetLog::Progress, L"종료 메시지 수신 %lu", GetCurrentThreadId());
 			PostQueuedCompletionStatus(_hIOCP, 0, 0, nullptr);
 			break;
 		}
+		else if (!result && overlapped == nullptr && compKey == 0 && transferred == 0)
+		{
+			continue;
+		}
 
-		switch ((ULONG_PTR)overlapped)
+		switch (overlapped->type)
 		{
 		case SEND_START:
 		{
+			SMPL_PROFILER(ENetworkProfile::NET_PROFILE_SEND_START);
 			session = (CSession*)compKey;
 
 			if (session->SendPostRaw())
@@ -379,6 +407,7 @@ void CWorkerThread::WorkerThread()
 		}
 		case RELEASE_SESSION:
 		{
+			SMPL_PROFILER(ENetworkProfile::NET_PROFILE_SEND_START);
 			session = (CSession*)compKey;
 			owner = session->_owner;
 			FContentHandle content = (FContentHandle)InterlockedOr((uintptr_t*)&session->_content, (uintptr_t)0);
@@ -399,38 +428,44 @@ void CWorkerThread::WorkerThread()
 			}
 			continue;
 		}
-		case POST_MESSAGE:
+		case JOB_POST:
 		{
+			SMPL_PROFILER(ENetworkProfile::NET_PROFILE_JOB);
+			FLambdaTask* task = (FLambdaTask*)compKey;
+			task->Invoke();
+			FLambdaTask::ReleaseTask(task);
+			continue;
+		}
+		case PIPE_POST:
+		{
+			SMPL_PROFILER(ENetworkProfile::NET_PROFILE_PIPE);
 			CLambdaPipe* internalSession = (CLambdaPipe*)compKey;
 			internalSession->Execute();
 			continue;
 		}
-		case POST_CONTENT:
+		case CONTENT_POST:
 		{
+			SMPL_PROFILER(ENetworkProfile::NET_PROFILE_CONTENT);
 			CContentQueue* content = (CContentQueue*)compKey;
 			content->Execute();
 			continue;
 		}
-		default:
+		case RECV_POST:
 		{
+			SMPL_PROFILER(ENetworkProfile::NET_PROFILE_RECV);
 			session = (CSession*)compKey;
-			break;
-		}
-		}
-
-		if (session->_recvOverlapped == overlapped)
-		{
 			if (transferred == 0)
 			{
 				InterlockedExchange8(&session->_invalid, 1);
 				session->Release();
-				continue;
+				break;
 			}
 
 			InterlockedAdd(&_recvBytes, (long)transferred);
-			DISABLE_WARNINGS_BEGIN(WARNING_4244)
+			DISABLE_WARNINGS_BEGIN(WARNING_4244);
 			session->_recvBuf->MoveWritePos(transferred);
-			DISABLE_WARNINGS_END()
+			DISABLE_WARNINGS_END();
+
 			if (session->_encoding)
 			{
 				RecvProcDecoding(session);
@@ -460,16 +495,21 @@ void CWorkerThread::WorkerThread()
 					session->Release();
 				}
 			}
+
+			session->Release();
+			break;
 		}
-		else if (session->_sendOverlapped == overlapped)
+		case SEND_POST:
 		{
-			requested = overlapped->reqLen;
+			SMPL_PROFILER(ENetworkProfile::NET_PROFILE_SEND);
+			session = (CSession*)compKey;
+			unsigned int requested = overlapped->reqLen;
 
 			if (transferred < requested)
 			{
 				InterlockedExchange8(&session->_invalid, 1);
 				session->Release();
-				continue;
+				break;
 			}
 
 			if (requested != 0)
@@ -489,10 +529,16 @@ void CWorkerThread::WorkerThread()
 			InterlockedExchange8(&session->_sending, 0);
 
 			SendProc(session);
-		}
 
-		session->Release();
+			session->Release();
+			break;
+		}
+		}
 	}
 
-	SLOGA(JNetLog::Network, L"Worker Thread Exit");
+	for (int i = 0; i < _workerObservers.size(); i++)
+	{
+		_workerObservers[i]->OnWorkerExit();
+	}
+	SLOGA(JNetLog::Progress, L"Worker Thread Exit %ul", GetCurrentThreadId());
 }

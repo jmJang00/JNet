@@ -5,7 +5,8 @@
 #include <JCore/CLockFreeQueue.h>
 #include <JCore/JWindows.h>
 #include <JNet/Types.h>
-#include <JNet/CWorkerThread.h>
+
+class CWorkerThread;
 
 struct FLambdaTask
 {
